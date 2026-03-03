@@ -1,13 +1,18 @@
 {
   "meta": {
-    "generated_at_utc": "2026-03-03 00:05:43 UTC",
+    "generated_at_utc": "2026-03-03 02:18:13 UTC",
     "python": "3.12",
     "seasons_used": [
       "2526",
       "2425"
     ],
-    "window_days": 14,
-    "note": "Poisson+Elo + scoreline matrix + EV/Kelly + backtest (football-data.co.uk)"
+    "window_days": 90,
+    "fusion": {
+      "W_PE": 0.6,
+      "W_ML": 0.4,
+      "ml_enabled": true
+    },
+    "note": "Full: football-data + fixtures fallback + Poisson/Elo + RF+MLP + fusion + EV/Kelly + backtest"
   },
   "stats": {
     "fixtures": 0,

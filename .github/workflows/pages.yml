@@ -34,13 +34,11 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements.txt
 
+      - name: Export JCZQ (JJ)
+        run: python -m src.collect.jj_export
+
       - name: Build
-        run: python -m src.build
-
-
-      - name: Export JCZQ (wencai51)
-        run: python -m src.collect.wencai51_export
-      - name: Upload artifact
+        run: python -m src.build      - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: site

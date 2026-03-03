@@ -9,7 +9,7 @@ from src.models.ml_ensemble import train_models, compute_latest_team_form, predi
 from src.engine.value import implied_prob, remove_overround, calc, score, label
 from src.backtest.backtest import backtest
 
-FUTURE_WINDOW_DAYS = 21
+FUTURE_WINDOW_DAYS = 90
 EV_THRESHOLD_BT = 0.03
 
 # 融合权重：Poisson/Elo vs ML
@@ -69,6 +69,27 @@ def main():
 
     # 4) 未来赛程：当季 CSV 的 future，取不到则 fixtures.csv 兜底
     fx = pd.DataFrame()
+    # ===== JJ fixtures (jj.shshier.com) =====
+    try:
+        import json
+        j = json.loads(open("site/data/jczq.json","r",encoding="utf-8").read())
+        ms = j.get("matches") or []
+        if ms:
+            import pandas as pd
+            fx = pd.DataFrame(ms)
+            fx["Date"] = pd.to_datetime(fx.get("time",""), errors="coerce")
+            # 没日期就不筛，至少展示
+            if "Date" in fx.columns and fx["Date"].notna().any():
+                fx = fx.sort_values(["Date","league","home"])
+            # 统一列名到 build 里使用
+            fx = fx.rename(columns={"home":"HomeTeam","away":"AwayTeam","league":"League"})
+            # 填 div 占位
+            if "Div" not in fx.columns:
+                fx["Div"] = fx.get("League","")
+            print("INFO: using JJ fixtures, matches=", len(fx))
+    except Exception as e:
+        print("WARN: JJ fixtures not used:", e)
+    # ===== end JJ fixtures =====
     if future_parts:
         fx = pd.concat(future_parts, ignore_index=True)
         fx = fx.dropna(subset=["Date","HomeTeam","AwayTeam"]).copy()
@@ -87,6 +108,14 @@ def main():
         fx = fx[fx["Date"] >= pd.Timestamp(now.date())]
         fx = fx[fx["Date"] <= pd.Timestamp(now.date()) + pd.Timedelta(days=FUTURE_WINDOW_DAYS)]
         fx = fx.sort_values(["Date","League","HomeTeam"])
+
+    # 兜底：过滤后仍为空，就展示 fixtures.csv 的前200行
+    if fx.empty:
+        try:
+            fx = fetch_fixtures_fallback().sort_values(["Date","League","HomeTeam"]).head(200)
+        except Exception:
+            pass
+
 
     rows = []
     for _, r in fx.iterrows():

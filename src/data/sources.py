@@ -81,6 +81,14 @@ def _try_float(x) -> Optional[float]:
         return None
 
 def pick_1x2_odds(row: pd.Series) -> Tuple[Optional[float], Optional[float], Optional[float], str]:
+    # 支持外部站点直接给的赔率字段
+    if 'odds_win' in row.index and 'odds_draw' in row.index and 'odds_lose' in row.index:
+        oh = _try_float(row.get('odds_win'))
+        od = _try_float(row.get('odds_draw'))
+        oa = _try_float(row.get('odds_lose'))
+        if oh and od and oa:
+            return oh, od, oa, 'JJ'
+
     """
     优先 B365，其次 PS/WH/VC...
     """
