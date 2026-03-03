@@ -4,3 +4,4 @@ scikit-learn==1.5.1
 requests==2.32.3
 python-dateutil==2.9.0.post0
 playwright==1.45.0
+beautifulsoup4>=4.12.0
