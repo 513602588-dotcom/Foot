@@ -1,49 +1,45 @@
-<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2/dist/tailwind.min.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
-<link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
 <!doctype html>
 <html lang="zh">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Footy Predict Pro</title>
+  <title>JCZQ Fusion Board</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<header class="wrap hero">
-  <div class="hero-top">
-    <div>
-      <div class="brand">Footy Predict Pro</div>
-      <div class="sub">Poisson+Elo · RandomForest · MLP · EV/Kelly · Backtest · GitHub Pages</div>
+<header class="hero-wrap">
+  <div class="wrap hero">
+    <div class="hero-top">
+      <div>
+        <div class="brand">JCZQ FUSION BOARD</div>
+        <div class="sub">500 + Okooo + API Sports + Football-Data + Odds + GPT/Gemini</div>
+      </div>
+      <button id="theme" class="btn">切换日/夜</button>
     </div>
-    <button id="theme" class="btn">🌙/☀️</button>
-  </div>
-  <div id="meta" class="meta">加载中…</div>
-  <div class="cards">
-    <div class="card"><div class="k">未来赛程</div><div id="k_fx" class="v">-</div></div>
-    <div class="card"><div class="k">Top Picks</div><div id="k_top" class="v">-</div></div>
-    <div class="card"><div class="k">回测ROI</div><div id="k_roi" class="v">-</div></div>
-    <div class="card"><div class="k">回测命中</div><div id="k_hit" class="v">-</div></div>
-    <div class="card"><div class="k">平均 EV</div><div id="k_ev" class="v">-</div></div>
-    <div class="card"><div class="k">Logloss</div><div id="k_log" class="v">-</div></div>
+    <div id="meta" class="meta">加载中...</div>
+    <div class="schedule">自动更新: 北京时间 09:30 / 21:30</div>
+    <div class="cards">
+      <div class="card"><div class="k">未来赛程</div><div id="k_fx" class="v">-</div></div>
+      <div class="card"><div class="k">综合推荐</div><div id="k_top" class="v">-</div></div>
+      <div class="card"><div class="k">回测 ROI</div><div id="k_roi" class="v">-</div></div>
+      <div class="card"><div class="k">命中率</div><div id="k_hit" class="v">-</div></div>
+      <div class="card"><div class="k">平均 EV</div><div id="k_ev" class="v">-</div></div>
+      <div class="card"><div class="k">Logloss</div><div id="k_log" class="v">-</div></div>
+    </div>
   </div>
 </header>
 
-  <!-- 仪表盘卡片示例 -->
-  <div class="wrap">
-    <div class="grid grid-cols-3 gap-4">
-      <div class="bg-green-500 p-6 rounded-xl text-white">
-        <h3>预计胜率</h3>
-        <p id="winRate" class="text-4xl font-bold">68.4%</p>
-      </div>
-      <!-- 更多卡片 -->
-    </div>
-  </div>
-
 <main class="wrap">
   <section>
-    <h2>分析统计</h2>
+    <h2>今日 4 场综合推荐</h2>
+    <div id="top-cards" class="pick-grid"></div>
+  </section>
+
+  <section>
+    <h2>分析统计面板</h2>
     <div class="table-wrap">
       <table id="stats">
         <thead><tr>
@@ -62,8 +58,8 @@
   </section>
 
   <section>
-    <h2>Top Picks</h2>
-    <div class="hint">只有行里带到赔率列时才算 EV/Kelly；否则只展示模型概率/比分。</div>
+    <h2>Top Picks 明细</h2>
+    <div class="hint">赔率可用时展示 EV/Kelly；无赔率时仍保留模型概率与比分推演。</div>
     <div class="table-wrap">
       <table id="top">
         <thead><tr>
@@ -77,7 +73,7 @@
   </section>
 
   <section>
-    <h2>全部赛程</h2>
+    <h2>全部竞彩分析</h2>
     <div class="table-wrap">
       <table id="all">
         <thead><tr>
@@ -88,21 +84,21 @@
       </table>
     </div>
   </section>
-<section class="wrap">
-  <h2>竞彩数据（500）</h2>
-  <div class="hint">如果为空：说明接口URL没填对或站点在 Runner 上不可达。</div>
-  <div class="table-wrap">
-    <table id="jczq">
-      <thead><tr>
-        <th>联赛</th><th>时间</th><th>主队</th><th>客队</th><th>胜</th><th>平</th><th>负</th><th>让球</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</section>
+  <section>
+    <h2>500 体彩抓取快照</h2>
+    <div class="hint">当 500 不可达时会自动启用 API-Football / Football-Data 补充赛程。</div>
+    <div class="table-wrap">
+      <table id="jczq">
+        <thead><tr>
+          <th>联赛</th><th>时间</th><th>主队</th><th>客队</th><th>胜</th><th>平</th><th>负</th><th>让球</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
 </main>
 
-<footer class="wrap footer">仅供学习研究，不构成投注建议。</footer>
+<footer class="wrap footer">仅供学习研究，不构成任何投资或投注建议。</footer>
 <script src="app.js"></script>
 </body>
 </html>

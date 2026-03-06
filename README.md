@@ -29,6 +29,21 @@ cp .env.example .env
 python -m src.build_pipeline
 ```
 
+## 📱 iPad + GitHub 最短部署步骤
+
+1. 在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 新建这些 `Repository secrets`:
+    `API_FOOTBALL_KEY`, `FOOTBALL_DATA_KEY`, `ODDS_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`
+2. 可选新增（不填也可跑默认值）:
+    `OPENAI_BASE_URL`, `GEMINI_BASE_URL`, `OPENAI_MODEL`, `GEMINI_MODEL`
+3. 进入 `Actions -> Daily JCZQ Build & Deploy`，先手动点一次 `Run workflow`。
+4. 之后会按北京时间 `09:30` 和 `21:30` 自动更新页面。
+
+本地一键运行（短命令）:
+
+```bash
+bash -lc 'set -e; cd /workspaces/Foot; python -m pip install -U pip; pip install pandas numpy scipy scikit-learn requests beautifulsoup4 lxml python-dotenv; python -m src.daily_jczq_pipeline'
+```
+
 > 管道现在包含一个可选的“阶段0”，可以在开始前刷新500网和澳客爬虫数据。启用方式在`run_full_pipeline`中传入`run_scrapers=True`。
 
 
