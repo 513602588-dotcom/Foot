@@ -23,7 +23,7 @@ import requests
 from dotenv import load_dotenv
 
 from src.backtest.backtest import backtest
-from src.collect import export_500, export_okooo, now_cn_date
+from src.collect import export_500, export_okooo, export_okooo_jczq, now_cn_date
 from src.engine.value import calc, implied_prob, label, remove_overround, score
 from src.models.bookmaker import predict_from_odds
 from src.models.ml_ensemble import compute_latest_team_form, predict_proba, train_models
@@ -113,11 +113,23 @@ def load_history_df() -> pd.DataFrame:
 
 
 def load_jczq_fixtures() -> pd.DataFrame:
-    src_json = OUT_DIR / "jczq.json"
-    rows: List[Dict[str, object]] = []
-    if src_json.exists():
-        data = json.loads(src_json.read_text(encoding="utf-8"))
-        rows = data.get("matches") or []
+    source_rows: List[Dict[str, object]] = []
+    for fn in ["jczq_okooo.json", "jczq.json"]:
+        p = OUT_DIR / fn
+        if not p.exists():
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            rs = data.get("matches") or []
+            # 优先保留澳客来源（通常 SP 更完整），500 作为补充。
+            if fn == "jczq_okooo.json":
+                source_rows = rs + source_rows
+            else:
+                source_rows += rs
+        except Exception:
+            continue
+
+    rows = source_rows
 
     # 默认只分析竞彩（JCZQ）。需要全局赛事回退时可显式开启。
     allow_global_fallback = os.getenv("ALLOW_GLOBAL_FIXTURE_FALLBACK", "false").lower() == "true"
@@ -131,6 +143,7 @@ def load_jczq_fixtures() -> pd.DataFrame:
     kick = fx.get("time", "").astype(str).str.extract(r"(\d{1,2}:\d{2})")[0].fillna("00:00")
     fx["Date"] = pd.to_datetime(fx["date"] + " " + kick, errors="coerce")
     fx = fx.rename(columns={"home": "HomeTeam", "away": "AwayTeam", "league": "League"})
+    fx["source"] = fx.get("source", "")
     fx["odds_win"] = pd.to_numeric(fx.get("odds_win"), errors="coerce")
     fx["odds_draw"] = pd.to_numeric(fx.get("odds_draw"), errors="coerce")
     fx["odds_lose"] = pd.to_numeric(fx.get("odds_lose"), errors="coerce")
@@ -139,6 +152,10 @@ def load_jczq_fixtures() -> pd.DataFrame:
     upper = today + timedelta(days=FUTURE_DAYS)
 
     fx = fx.dropna(subset=["Date", "HomeTeam", "AwayTeam"]).copy()
+    # 先按比赛键去重，澳客（okooo）优先。
+    fx["_priority"] = fx["source"].astype(str).str.contains("okooo", case=False, na=False).astype(int)
+    fx = fx.sort_values(["_priority", "Date"], ascending=[False, True])
+    fx = fx.drop_duplicates(subset=["date", "HomeTeam", "AwayTeam"], keep="first").copy()
     in_window = fx[(fx["Date"] >= today) & (fx["Date"] <= upper)].copy()
     if not in_window.empty:
         return in_window.sort_values(["Date", "League", "HomeTeam"]).reset_index(drop=True)
@@ -651,6 +668,13 @@ def run() -> int:
         export_500(days=4, direction="future")
     except Exception as exc:
         print(f"WARN export_500 failed: {exc}")
+
+    try:
+        payload_okooo = export_okooo_jczq()
+        (OUT_DIR / "jczq_okooo.json").write_text(json.dumps(payload_okooo, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"INFO okooo_jczq count={payload_okooo.get('meta', {}).get('count', 0)}")
+    except Exception as exc:
+        print(f"WARN export_okooo_jczq failed: {exc}")
 
     try:
         export_okooo(start_date=now_cn_date(), days=10, version="full")
