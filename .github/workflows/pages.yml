@@ -16,6 +16,17 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    env:
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+      GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL }}
+      OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+      GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+      ALLOW_GLOBAL_FIXTURE_FALLBACK: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -28,20 +39,36 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy scipy scikit-learn requests beautifulsoup4 lxml python-dotenv
 
-      - name: Create .env from Secrets
+      - name: Validate Required Secrets
         run: |
-          cat > .env << 'EOF'
-          API_FOOTBALL_KEY=${{ secrets.API_FOOTBALL_KEY }}
-          FOOTBALL_DATA_KEY=${{ secrets.FOOTBALL_DATA_KEY }}
-          ODDS_API_KEY=${{ secrets.ODDS_API_KEY }}
-          OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL || 'https://nan.meta-api.vip/v1' }}
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL=${{ secrets.OPENAI_MODEL }}
-          GEMINI_BASE_URL=${{ secrets.GEMINI_BASE_URL || 'https://once.novai.su/v1' }}
-          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL=${{ secrets.GEMINI_MODEL }}
-          ALLOW_GLOBAL_FIXTURE_FALLBACK=true
-          EOF
+          set -e
+          required_vars=(API_FOOTBALL_KEY FOOTBALL_DATA_KEY ODDS_API_KEY OPENAI_API_KEY GEMINI_API_KEY)
+          for v in "${required_vars[@]}"; do
+            val="${!v}"
+            if [[ -z "$val" ]]; then
+              echo "ERROR: missing required secret $v"
+              exit 1
+            fi
+            if [[ "$val" =~ your_|_here|placeholder|changeme ]]; then
+              echo "ERROR: secret $v looks like a placeholder"
+              exit 1
+            fi
+          done
+
+          if [[ -z "$OPENAI_BASE_URL" ]]; then
+            echo "OPENAI_BASE_URL not set, using default relay"
+            echo "OPENAI_BASE_URL=https://nan.meta-api.vip/v1" >> "$GITHUB_ENV"
+          fi
+          if [[ -z "$GEMINI_BASE_URL" ]]; then
+            echo "GEMINI_BASE_URL not set, using default relay"
+            echo "GEMINI_BASE_URL=https://once.novai.su/v1" >> "$GITHUB_ENV"
+          fi
+          if [[ -z "$OPENAI_MODEL" ]]; then
+            echo "OPENAI_MODEL=gpt-5.4,gpt-5.3" >> "$GITHUB_ENV"
+          fi
+          if [[ -z "$GEMINI_MODEL" ]]; then
+            echo "GEMINI_MODEL=gemini-3.1-pro,gemini-3.0-pro" >> "$GITHUB_ENV"
+          fi
 
       - name: Run Daily JCZQ Pipeline
         run: |

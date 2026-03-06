@@ -76,6 +76,175 @@ def valid_key(v: str) -> bool:
     return not any(x in lv for x in bad)
 
 
+def parse_model_candidates(model_value: str) -> List[str]:
+    raw_items = [x.strip() for x in str(model_value or "").split(",") if x.strip()]
+    if not raw_items:
+        raw_items = ["gpt-5"]
+
+    aliases = {
+        # Common typo from env/user input.
+        "gtp-5.4": "gpt-5.4",
+        "gtp-5": "gpt-5",
+    }
+
+    out: List[str] = []
+    seen: Set[str] = set()
+
+    def push(name: str) -> None:
+        n = name.strip()
+        if not n:
+            return
+        ln = n.lower()
+        if ln in seen:
+            return
+        seen.add(ln)
+        out.append(n)
+
+    for item in raw_items:
+        normalized = aliases.get(item.lower(), item)
+        push(normalized)
+
+        low = normalized.lower()
+        # Expand short version aliases users often provide.
+        if low in {"5.4", "gpt5.4", "gpt-5.4"}:
+            push("gpt-5.4")
+        if low in {"5.3", "gpt5.3", "gpt-5.3"}:
+            push("gpt-5.3")
+        if low in {"3.1", "gemini3.1", "gemini-3.1"}:
+            push("gemini-3.1")
+            push("gemini-3.1-pro")
+        if low in {"3.0", "gemini3.0", "gemini-3.0"}:
+            push("gemini-3.0")
+            push("gemini-3.0-pro")
+
+        # Add pragmatic fallbacks so a single unavailable model does not kill LLM output.
+        if low.startswith("gpt"):
+            push("gpt-5")
+            push("gpt-4o-mini")
+        if low.startswith("gemini"):
+            push("gemini-2.5-pro")
+            push("gemini-1.5-pro")
+
+    return out
+
+
+def _team_name_quality(name: str) -> bool:
+    t = str(name or "").strip()
+    if len(t) < 2:
+        return False
+    # Drop noise like pure numeric ids from fallback parsers.
+    if re.fullmatch(r"\d+", t):
+        return False
+    alnum = re.sub(r"[^A-Za-z0-9\u4e00-\u9fff]", "", t)
+    if not alnum:
+        return False
+    digit_ratio = sum(ch.isdigit() for ch in alnum) / max(1, len(alnum))
+    if digit_ratio >= 0.6:
+        return False
+    return True
+
+
+def probe_external_connections() -> Dict[str, object]:
+    out: Dict[str, object] = {}
+
+    api_key = env_value("API_FOOTBALL_KEY", "API_FOOTBALL_API_KEY")
+    if valid_key(api_key):
+        try:
+            r = requests.get(
+                env_value("API_FOOTBALL_BASE", default="https://v3.football.api-sports.io").rstrip("/") + "/status",
+                headers={"x-apisports-key": api_key},
+                timeout=12,
+            )
+            out["api_football"] = {"ok": r.ok, "status": r.status_code}
+        except Exception as exc:
+            out["api_football"] = {"ok": False, "error": str(exc)}
+    else:
+        out["api_football"] = {"ok": False, "error": "missing_or_placeholder_key"}
+
+    fdb_key = env_value("FOOTBALL_DATA_KEY", "FOOTBALL_DATA_API_KEY")
+    if valid_key(fdb_key):
+        try:
+            r = requests.get(
+                "https://api.football-data.org/v4/matches",
+                headers={"X-Auth-Token": fdb_key},
+                params={"dateFrom": now_cn_date(), "dateTo": now_cn_date()},
+                timeout=12,
+            )
+            out["football_data"] = {"ok": r.ok, "status": r.status_code}
+        except Exception as exc:
+            out["football_data"] = {"ok": False, "error": str(exc)}
+    else:
+        out["football_data"] = {"ok": False, "error": "missing_or_placeholder_key"}
+
+    odds_key = env_value("ODDS_API_KEY", "THE_ODDS_API_KEY")
+    if valid_key(odds_key):
+        try:
+            r = requests.get(
+                "https://api.the-odds-api.com/v4/sports",
+                params={"apiKey": odds_key},
+                timeout=12,
+            )
+            out["odds_api"] = {"ok": r.ok, "status": r.status_code}
+        except Exception as exc:
+            out["odds_api"] = {"ok": False, "error": str(exc)}
+    else:
+        out["odds_api"] = {"ok": False, "error": "missing_or_placeholder_key"}
+
+    # Probe relay style chat API with tiny call.
+    def _probe_llm(name: str, base: str, key: str, model: str) -> Dict[str, object]:
+        if not valid_key(key):
+            return {"ok": False, "error": "missing_or_placeholder_key"}
+        try:
+            r = requests.post(
+                base.rstrip("/") + "/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 5,
+                    "temperature": 0,
+                },
+                timeout=14,
+            )
+            return {"ok": r.ok, "status": r.status_code}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    openai_models = env_value("OPENAI_MODEL", default="gpt-5.4,gpt-5.3")
+    gemini_models = env_value("GEMINI_MODEL", default="gemini-3.1-pro,gemini-3.0-pro")
+
+    openai_probe = {"ok": False, "error": "all_model_candidates_failed"}
+    for cand in parse_model_candidates(openai_models):
+        probe_one = _probe_llm(
+            "openai_relay",
+            env_value("OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_RELAY_URL", default="https://nan.meta-api.vip/v1"),
+            env_value("OPENAI_API_KEY", "OPENAI_KEY", "OPENAI_RELAY_KEY"),
+            cand,
+        )
+        probe_one["model"] = cand
+        if probe_one.get("ok"):
+            openai_probe = probe_one
+            break
+        openai_probe = probe_one
+    out["openai_relay"] = openai_probe
+
+    gemini_probe = {"ok": False, "error": "all_model_candidates_failed"}
+    for cand in parse_model_candidates(gemini_models):
+        probe_one = _probe_llm(
+            "gemini_relay",
+            env_value("GEMINI_BASE_URL", "GEMINI_API_BASE", "GEMINI_RELAY_URL", default="https://once.novai.su/v1"),
+            env_value("GEMINI_API_KEY", "GEMINI_KEY", "GEMINI_RELAY_KEY"),
+            cand,
+        )
+        probe_one["model"] = cand
+        if probe_one.get("ok"):
+            gemini_probe = probe_one
+            break
+        gemini_probe = probe_one
+    out["gemini_relay"] = gemini_probe
+    return out
+
+
 def utc_now_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -152,6 +321,10 @@ def load_jczq_fixtures() -> pd.DataFrame:
     upper = today + timedelta(days=FUTURE_DAYS)
 
     fx = fx.dropna(subset=["Date", "HomeTeam", "AwayTeam"]).copy()
+    fx = fx[
+        fx["HomeTeam"].astype(str).map(_team_name_quality)
+        & fx["AwayTeam"].astype(str).map(_team_name_quality)
+    ].copy()
     # 先按比赛键去重，澳客（okooo）优先。
     fx["_priority"] = fx["source"].astype(str).str.contains("okooo", case=False, na=False).astype(int)
     fx = fx.sort_values(["_priority", "Date"], ascending=[False, True])
@@ -398,27 +571,31 @@ def llm_chat_completion(base: str, key: str, model: str, prompt: str) -> Optiona
         return None
 
     url = base.rstrip("/") + "/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a concise football analyst. Reply in Chinese in <= 70 chars."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 120,
-    }
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
-        choices = data.get("choices") or []
-        if not choices:
-            return None
-        return (choices[0].get("message") or {}).get("content", "").strip() or None
-    except Exception:
-        return None
+    for m in parse_model_candidates(model):
+        payload = {
+            "model": m,
+            "messages": [
+                {"role": "system", "content": "You are a concise football analyst. Reply in Chinese in <= 70 chars."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 120,
+        }
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+            choices = data.get("choices") or []
+            if not choices:
+                continue
+            txt = (choices[0].get("message") or {}).get("content", "").strip()
+            if txt:
+                return txt
+        except Exception:
+            continue
+    return None
 
 
 def build_llm_reason(cfg: LLMConfig, pick: Dict[str, object]) -> Tuple[str, str, Optional[str], Optional[str]]:
@@ -634,10 +811,11 @@ def load_llm_config() -> LLMConfig:
     return LLMConfig(
         openai_base=env_value("OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_RELAY_URL", default="https://nan.meta-api.vip/v1"),
         openai_key=openai_key if valid_key(openai_key) else "",
-        openai_model=env_value("OPENAI_MODEL", default="gpt-4o-mini"),
+        # Keep env-overridable; first candidate is preferred, others are auto fallback.
+        openai_model=env_value("OPENAI_MODEL", default="gpt-5.4,gpt-5.3"),
         gemini_base=env_value("GEMINI_BASE_URL", "GEMINI_API_BASE", "GEMINI_RELAY_URL", default="https://once.novai.su/v1"),
         gemini_key=gemini_key if valid_key(gemini_key) else "",
-        gemini_model=env_value("GEMINI_MODEL", default="gemini-2.0-flash"),
+        gemini_model=env_value("GEMINI_MODEL", default="gemini-3.1-pro,gemini-3.0-pro"),
     )
 
 
@@ -662,6 +840,9 @@ def run() -> int:
             llm_gemini_on,
         )
     )
+
+    probe = probe_external_connections()
+    print("[probe]", json.dumps(probe, ensure_ascii=False))
 
     print(f"[1/4] crawl start {utc_now_str()}")
     try:
@@ -728,6 +909,7 @@ def run() -> int:
         "odds_api_enabled": odds_api_on,
         "allow_global_fixture_fallback": os.getenv("ALLOW_GLOBAL_FIXTURE_FALLBACK", "false").lower() == "true",
     }
+    payload.setdefault("meta", {})["connection_probe"] = probe
     write_outputs(payload)
 
     print(f"DONE top={len(payload['top_picks'])} all={len(payload['all'])}")

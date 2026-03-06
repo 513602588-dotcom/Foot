@@ -20,6 +20,20 @@ function safeText(v) {
   return String(v || "").replace(/"/g, "'");
 }
 
+function cleanText(v) {
+  return safeText(String(v || "").replace(/[\u0000-\u001f]/g, "").trim());
+}
+
+function isTeamNameOk(v) {
+  const t = cleanText(v);
+  if (t.length < 2) return false;
+  if (/^\d+$/.test(t)) return false;
+  const core = t.replace(/[^A-Za-z0-9\u4e00-\u9fff]/g, "");
+  if (core.length < 2) return false;
+  const digits = (core.match(/\d/g) || []).length;
+  return digits / core.length < 0.6;
+}
+
 function modelProbCell(x) {
   const one = (name, arr) => {
     if (!arr) return "";
@@ -35,6 +49,12 @@ function reasonBlock(x) {
   const gem = rs.gemini ? `<div><strong>Gemini:</strong> ${rs.gemini}</div>` : "";
   const fb = rs.fallback ? `<div><strong>Fallback:</strong> ${rs.fallback}</div>` : "";
   return `<div class="reason-block"><div><strong>模型:</strong> ${base}</div>${gpt}${gem}${fb}</div>`;
+}
+
+function reasonPreview(x) {
+  const rs = x.reasons || {};
+  const src = cleanText(rs.base || x.why || "-");
+  return src.length > 52 ? `${src.slice(0, 52)}...` : src;
 }
 
 function initTheme() {
@@ -90,9 +110,13 @@ async function renderPicks() {
   const llmLine = `LLM状态 OpenAI:${usage.openai || 0} Gemini:${usage.gemini || 0} 双模型:${usage.both || 0} 回退:${usage.fallback || 0}`;
   const apiUsage = meta.api_usage || {};
   const apiLine = `API状态 Foot:${apiUsage.api_football_enabled ? "ON" : "OFF"} FD:${apiUsage.football_data_enabled ? "ON" : "OFF"} Odds:${apiUsage.odds_api_enabled ? "ON" : "OFF"}`;
+  const probe = meta.connection_probe || {};
+  const pOpenai = probe.openai_relay || {};
+  const pGemini = probe.gemini_relay || {};
+  const relayLine = `Relay探针 OpenAI:${pOpenai.ok ? "OK" : "FAIL"}${pOpenai.model ? `(${pOpenai.model})` : ""} Gemini:${pGemini.ok ? "OK" : "FAIL"}${pGemini.model ? `(${pGemini.model})` : ""}`;
   const scheduleLine = document.querySelector(".schedule");
   if (scheduleLine) {
-    scheduleLine.textContent = `${scheduleLine.textContent} | ${apiLine} | ${llmLine}`;
+    scheduleLine.textContent = `${scheduleLine.textContent} | ${apiLine} | ${llmLine} | ${relayLine}`;
   }
 
   document.getElementById("k_fx").textContent = String(stats.fixtures ?? 0);
@@ -154,7 +178,7 @@ async function renderPicks() {
       <td class="prob-cell">${modelProbCell(x)}</td>
       <td>${x.most_likely_score || "-"}</td>
       <td>${badge(x.label)}</td>
-      <td title="${safeText(x.why)}">${reasonBlock(x)}</td>
+      <td title="${safeText(x.why)}">${reasonPreview(x)}</td>
     </tr>
   `).join("");
 }
@@ -162,23 +186,35 @@ async function renderPicks() {
 async function renderJCZQ() {
   const tb = document.querySelector("#jczq tbody");
   try {
-    const res = await fetch("data/jczq.json", { cache: "no-store" });
-    const data = await res.json();
-    const rows = data.matches || [];
+    const [r500, rok] = await Promise.all([
+      fetch("data/jczq.json", { cache: "no-store" }).then((r) => (r.ok ? r.json() : { matches: [] })).catch(() => ({ matches: [] })),
+      fetch("data/jczq_okooo.json", { cache: "no-store" }).then((r) => (r.ok ? r.json() : { matches: [] })).catch(() => ({ matches: [] })),
+    ]);
+
+    const rowsRaw = [...(rok.matches || []), ...(r500.matches || [])];
+    const seen = new Set();
+    const rows = rowsRaw.filter((m) => {
+      if (!isTeamNameOk(m.home) || !isTeamNameOk(m.away)) return false;
+      const k = `${m.date || ""}|${m.home || ""}|${m.away || ""}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+
     if (!rows.length) {
-      tb.innerHTML = `<tr><td colspan="8">暂无竞彩网数据: ${data.meta?.error || "请检查抓取日志"}</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="8">暂无竞彩网数据: 请检查抓取日志</td></tr>`;
       return;
     }
     tb.innerHTML = rows.slice(0, 120).map((m) => `
       <tr>
-        <td>${m.league || ""}</td>
-        <td>${m.time || ""}</td>
-        <td>${m.home || ""}</td>
-        <td>${m.away || ""}</td>
+        <td>${cleanText(m.league || "竞彩")} <span class="mini-src">${cleanText(m.source || "")}</span></td>
+        <td>${cleanText(m.time || "")}</td>
+        <td>${cleanText(m.home || "")}</td>
+        <td>${cleanText(m.away || "")}</td>
         <td>${m.odds_win ?? "-"}</td>
         <td>${m.odds_draw ?? "-"}</td>
         <td>${m.odds_lose ?? "-"}</td>
-        <td>${m.handicap ?? "-"}</td>
+        <td>${cleanText(m.handicap ?? "-")}</td>
       </tr>
     `).join("");
   } catch (err) {

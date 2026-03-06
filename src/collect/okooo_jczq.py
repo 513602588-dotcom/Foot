@@ -14,6 +14,40 @@ HEADERS = {**BASE_HEADERS, "Referer": "https://m.okooo.com/"}
 URL = "https://m.okooo.com/jczq/"
 
 
+def _is_team_name_ok(name: str) -> bool:
+    t = str(name or "").strip()
+    if len(t) < 2:
+        return False
+    if re.fullmatch(r"\d+", t):
+        return False
+    core = re.sub(r"[^A-Za-z0-9\u4e00-\u9fff]", "", t)
+    if len(core) < 2:
+        return False
+    digit_ratio = sum(ch.isdigit() for ch in core) / max(1, len(core))
+    return digit_ratio < 0.6
+
+
+def _best_decode(resp) -> str:
+    # Mobile pages may vary between utf-8/gbk on mirrors.
+    cands = []
+    for enc in ["utf-8", "gbk", "gb2312"]:
+        try:
+            txt = resp.content.decode(enc, errors="replace")
+            cands.append(txt)
+        except Exception:
+            continue
+    if not cands:
+        return decode_response(resp)
+    # Prefer candidate that contains most Chinese chars and key tokens.
+    scored = []
+    for t in cands:
+        zh = len(re.findall(r"[\u4e00-\u9fff]", t))
+        bonus = 200 if ("竞彩" in t or "澳客" in t) else 0
+        scored.append((zh + bonus, t))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[0][1]
+
+
 def _guess_cols(df: pd.DataFrame) -> Dict[str, str]:
     cols = [str(c) for c in df.columns]
     low = [c.lower() for c in cols]
@@ -49,6 +83,7 @@ def _normalize_table(df: pd.DataFrame, date_str: str) -> pd.DataFrame:
     out["odds_draw"] = df[m["sp1"]].map(to_float) if m["sp1"] in df.columns else None
     out["odds_lose"] = df[m["sp0"]].map(to_float) if m["sp0"] in df.columns else None
     out = out[(out["home"].astype(str).str.len() > 0) & (out["away"].astype(str).str.len() > 0)]
+    out = out[out["home"].astype(str).map(_is_team_name_ok) & out["away"].astype(str).map(_is_team_name_ok)]
     return out.reset_index(drop=True)
 
 
@@ -66,25 +101,26 @@ def _extract_from_rows(html: str, date_str: str) -> pd.DataFrame:
             continue
 
         teams = re.findall(r"([\u4e00-\u9fffA-Za-z0-9·\-]{2,})", text)
+        teams = [t for t in teams if _is_team_name_ok(t)]
         if len(teams) < 2:
             continue
 
         odds = [to_float(x) for x in re.findall(r"\b\d+\.\d{2}\b", text)]
         odds = [x for x in odds if x is not None]
 
-        rows.append(
-            {
-                "date": date_str,
-                "source": "okooo_mobile_jczq",
-                "league": "竞彩",
-                "time": "",
-                "home": teams[0],
-                "away": teams[1],
-                "odds_win": odds[0] if len(odds) > 0 else None,
-                "odds_draw": odds[1] if len(odds) > 1 else None,
-                "odds_lose": odds[2] if len(odds) > 2 else None,
-            }
-        )
+        row = {
+            "date": date_str,
+            "source": "okooo_mobile_jczq",
+            "league": "竞彩",
+            "time": "",
+            "home": teams[0],
+            "away": teams[1],
+            "odds_win": odds[0] if len(odds) > 0 else None,
+            "odds_draw": odds[1] if len(odds) > 1 else None,
+            "odds_lose": odds[2] if len(odds) > 2 else None,
+        }
+        if _is_team_name_ok(row["home"]) and _is_team_name_ok(row["away"]):
+            rows.append(row)
 
     if not rows:
         return pd.DataFrame(columns=["date", "source", "league", "time", "home", "away", "odds_win", "odds_draw", "odds_lose"])
@@ -96,7 +132,7 @@ def _extract_from_rows(html: str, date_str: str) -> pd.DataFrame:
 def fetch_today() -> pd.DataFrame:
     date_str = now_cn_date()
     resp = requests.get(URL, headers=HEADERS, timeout=20)
-    html = decode_response(resp, default_encoding="utf-8")
+    html = _best_decode(resp)
 
     tables = safe_read_html(html)
     frames: List[pd.DataFrame] = []
@@ -121,6 +157,7 @@ def export_today() -> Dict[str, object]:
         "meta": {
             "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             "source": URL,
+            "decode": "auto(utf8|gbk)",
             "count": int(len(df)),
         },
         "matches": df.to_dict("records"),
