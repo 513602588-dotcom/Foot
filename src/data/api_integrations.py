@@ -343,3 +343,23 @@ def create_data_aggregator(
         football_data_key=football_data_key,
         odds_api_key=odds_api_key
     )
+def validate_and_get_api_keys() -> Dict[str, str]:
+    """
+    密钥有效性验证函数，补全原有代码逻辑
+    返回：所有有效密钥的字典
+    """
+    logger.info("=== 密钥有效性验证 ===")
+    valid_keys = {}
+    
+    # 遍历所有密钥，验证非空
+    for key_name, key_value in ENV_CONFIG.items():
+        if "KEY" in key_name:
+            key_len = len(key_value.strip())
+            if key_len > 0:
+                logger.info(f"✅ {key_name} 验证通过，长度：{key_len}")
+                valid_keys[key_name] = key_value.strip()
+            else:
+                logger.error(f"❌ {key_name} 验证失败：密钥为空")
+    
+    logger.info(f"=== 密钥验证完成，共 {len(valid_keys)} 个有效密钥 ===")
+    return valid_keys
