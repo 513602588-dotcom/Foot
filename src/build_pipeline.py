@@ -1,12 +1,21 @@
 """
-足球赛事预测主管道 - 最终完整版
-核心优先级：你的SuperFusionModel超级融合模型 > 保底逻辑
-✅ 完整集成DeepSeek API：中文队名翻译+赛事专业AI分析
-✅ 已修复所有问题：openai导入报错、全主胜异常、历史数据警告、字段不匹配
-✅ 全流程异常兜底，可配置强制只用你的融合模型
-✅ 直接复制替换整个文件即可使用，无需额外修改
+足球赛事预测主管道 - 彻底修复导入报错最终版
+✅ 修复NameError: name 'os' is not defined 核心报错
+✅ 100%优先你的超级融合模型SuperFusionModel
+✅ 完整集成DeepSeek API：中文队名翻译+赛事AI分析
+✅ 已修复所有历史问题：全主胜异常、导入报错、格式警告
+✅ 直接复制替换整个文件即可使用，无需任何修改
 """
-# ===================== 【配置开关】可自行修改 =====================
+# ===================== 【第一步：最开头先导入所有基础库，彻底解决导入顺序报错】=====================
+import os
+import logging
+import sqlite3
+import json
+from datetime import datetime, timezone
+from typing import List, Dict
+import pandas as pd
+
+# ===================== 【第二步：配置开关，所有用到os的代码都在import之后】=====================
 # 强制只用你的超级融合模型：True=模型失败直接终止管道，False=模型失败自动用保底逻辑
 FORCE_USE_FUSION_MODEL = False
 # 预测未来天数
@@ -21,25 +30,15 @@ OUTPUT_DIR = "./public"
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-# ====================================================================
 
-# ===================== 第一步：基础库导入 + 日志初始化（绝对无报错）=====================
-import logging
-import os
-import sqlite3
-import json
-from datetime import datetime, timezone
-from typing import List, Dict
-import pandas as pd
-
-# 日志初始化（放在最开头，全文件可用，彻底解决名称未定义报错）
+# ===================== 【第三步：日志初始化，已经导入了logging库，不会报错】=====================
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# ===================== 第二步：五大联赛完整中英队名字典（国内竞彩标准译名）=====================
+# ===================== 第四步：五大联赛完整中英队名字典（国内竞彩标准译名）=====================
 TEAM_CN_MAPPING = {
     # 英超 PL
     "Arsenal FC": "阿森纳",
@@ -162,7 +161,7 @@ TEAM_CN_MAPPING = {
     "Girondins de Bordeaux": "波尔多",
 }
 
-# ===================== 第三步：DeepSeek API核心功能（延迟导入，彻底解决导入报错）=====================
+# ===================== 第五步：DeepSeek API核心功能（延迟导入，彻底解决导入报错）=====================
 # 全局变量，延迟初始化
 deepseek_client = None
 DEEPSEEK_AVAILABLE = False
@@ -275,12 +274,12 @@ def generate_match_analysis(match_info: Dict) -> str:
         logger.warning(f"⚠️ {match_info['home_team_cn']}vs{match_info['away_team_cn']}AI分析生成失败：{str(e)}")
         return "AI分析生成失败，可参考概率数据进行决策"
 
-# ===================== 第四步：项目基础模块导入（放在DeepSeek初始化之后，避免报错）=====================
+# ===================== 第六步：项目基础模块导入 =====================
 from src.data.api_integrations import create_data_aggregator, validate_and_get_api_keys
 from src.data.feature_engineering import build_features_dataset
 from src.data.data_collector_enhanced import FootballDataCollector
 
-# ===================== 第五步：你的超级融合模型初始化（核心优先级最高）=====================
+# ===================== 第七步：你的超级融合模型初始化（核心优先级最高）=====================
 # 全局模型实例
 MODEL_AVAILABLE = False
 _fusion_model = None
@@ -307,6 +306,17 @@ def init_prediction_model():
     if _fusion_model is None:
         try:
             _fusion_model = SuperFusionModel()
+            # ===================== 在这里自定义调整模型融合权重，调整胜率 =====================
+            # 示例：把XGBoost权重从25%提到35%，Poisson从20%降到10%
+            # _fusion_model.weights = {
+            #     "xgboost": 0.35,
+            #     "dnn": 0.25,
+            #     "poisson": 0.10,
+            #     "elo": 0.15,
+            #     "xg": 0.10,
+            #     "home_advantage": 0.05
+            # }
+            # ==================================================================================
             logger.info("✅ 你的超级融合模型初始化完成，将作为核心预测引擎")
         except Exception as e:
             if FORCE_USE_FUSION_MODEL:
@@ -354,7 +364,7 @@ def load_historical_data() -> List[Dict]:
         logger.error(f"加载历史数据时出错：{str(e)}", exc_info=False)
         return []
 
-# ===================== 第六步：核心预测函数（100%优先你的超级融合模型）=====================
+# ===================== 第八步：核心预测函数（100%优先你的超级融合模型）=====================
 def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = None) -> pd.DataFrame:
     """
     【核心预测函数】100%优先你的超级融合模型
@@ -514,7 +524,7 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
             exit(1)
         return pd.DataFrame()
 
-# ===================== 第七步：静态页面生成（适配手机端+完整展示模型输出）=====================
+# ===================== 第九步：静态页面生成（适配手机端+完整展示模型输出）=====================
 def generate_static_page(prediction_df: pd.DataFrame):
     """生成GitHub Pages静态页面，完整展示你的模型输出、中文队名、AI分析，适配手机端"""
     try:
@@ -689,7 +699,7 @@ def generate_static_page(prediction_df: pd.DataFrame):
     except Exception as e:
         logger.error(f"生成静态页面出错：{str(e)}", exc_info=True)
 
-# ===================== 第八步：执行报告生成 =====================
+# ===================== 第十步：执行报告生成 =====================
 def generate_execution_report(
     start_time: datetime,
     matches_count: int,
@@ -737,7 +747,7 @@ def generate_execution_report(
     
     return report
 
-# ===================== 第九步：主管道入口（全流程异常兜底）=====================
+# ===================== 第十一步：主管道入口（全流程异常兜底）=====================
 def main():
     """主管道入口，全流程异常兜底，100%确保不会无故中断"""
     start_time = datetime.now(timezone.utc)
