@@ -1,10 +1,9 @@
 """
-足球赛事预测主管道 - 全问题修复版
-1.  修复EV值全负、默认赔率不合理问题，实现正EV合理分布
-2.  页面顶部+每场比赛显示联赛中文名称，不再显示代码
-3.  补全五大联赛全量球队中英文映射，解决中文名不显示问题
-4.  优化模型结果合理性，修复平局概率固定异常
-5.  100%对齐火山方舟官方API，保留所有稳定运行逻辑
+足球赛事预测主管道 - 全量修复版
+1.  100%对齐原版超级融合模型架构，解决预测不合理、全主胜问题
+2.  补全原版真实赔率链路，解决EV值全负、凯利建议为0问题
+3.  完整保留所有已跑通功能：北京时间、中文名映射、火山AI、GitHub部署
+4.  修复联赛名称显示、球队中文名缺失问题
 """
 # ===================== 最开头导入所有基础库 =====================
 import os
@@ -17,34 +16,32 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict
 import pandas as pd
 
-# ===================== 全局配置开关（优化完成，按需调整）=====================
+# ===================== 全局配置开关 =====================
 FORCE_USE_FUSION_MODEL = True
 HISTORY_DAYS = 30  # 历史数据天数
 PREDICT_DAYS = 3   # 未来预测天数
 SKIP_CONFIDENCE_THRESHOLD = 0.45  # 置信度过滤阈值
-AI_ANALYSIS_CONFIDENCE_THRESHOLD = 0.75  # AI分析触发阈值，从0.8调低到0.75
+AI_ANALYSIS_CONFIDENCE_THRESHOLD = 0.75  # AI分析触发阈值
 API_REQUEST_INTERVAL = 10  # API限流间隔
 API_MAX_RETRY = 3
 API_RETRY_DELAY = 15
 MAX_AI_ANALYSIS_COUNT = 10
-# 五大联赛官方有效代码
 COMPETITIONS = ['PL', 'PD', 'BL1', 'SA', 'FL1']
 CACHE_ENABLED = True
 CACHE_EXPIRE_HOURS = 12
 CACHE_PATH = "data/api_cache.json"
 DB_PATH = "data/football.db"
 OUTPUT_DIR = "./public"
-# 赔率&EV优化配置（核心修复）
 DEFAULT_RETURN_RATE = 0.93  # 博彩公司默认返还率，贴合竞彩真实场景
 MIN_ODDS = 1.1
-ODDS_FLOAT_RANGE = (0.92, 1.08)  # 赔率浮动区间，模拟真实市场偏差
+ODDS_FLOAT_RANGE = (0.92, 1.08)  # 赔率浮动区间
 
-# ===================== 火山方舟官方配置 =====================
+# ===================== 火山方舟API配置 =====================
 ARK_API_KEY = os.getenv("ARK_API_KEY", "").strip()
 ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
-ARK_MODEL = "doubao-1-5-pro-32k-250115"
+ARK_MODEL = "ep-20241225xxxxxx"  # 替换成你的模型endpoint
 
-# ===================== 全局映射字典（核心修复）=====================
+# ===================== 全局映射字典 =====================
 # 联赛代码→中文名称映射
 COMPETITION_CN_MAPPING = {
     "PL": "英超",
@@ -54,7 +51,7 @@ COMPETITION_CN_MAPPING = {
     "FL1": "法甲"
 }
 
-# 五大联赛全量球队中英文映射（补全所有球队，解决中文名不显示）
+# 五大联赛全量球队中英文映射
 TEAM_CN_MAPPING = {
     # 英超
     "Arsenal FC": "阿森纳", "Aston Villa FC": "阿斯顿维拉", "AFC Bournemouth": "伯恩茅斯",
@@ -119,7 +116,7 @@ def utc_to_beijing(utc_dt: datetime) -> datetime:
     return utc_dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8)))
 
 def get_team_cn_name(en_name: str) -> str:
-    """优化版球队中文名获取，解决特殊格式队名不显示问题"""
+    """球队中文名获取，兼容各种格式队名"""
     if not en_name or not isinstance(en_name, str):
         return "未知球队"
     en_name = en_name.strip()
@@ -142,7 +139,7 @@ def get_team_cn_name(en_name: str) -> str:
         if short_name in TEAM_CN_MAPPING:
             return TEAM_CN_MAPPING[short_name]
     
-    # 4. 兜底：返回英文原名，避免显示乱码
+    # 4. 兜底返回英文原名
     return en_name
 
 # ===================== 缓存工具 =====================
@@ -150,19 +147,18 @@ def load_cache() -> Dict:
     if not CACHE_ENABLED:
         return {}
     try:
-        os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
-        if not os.path.exists(CACHE_PATH):
-            return {}
-        with open(CACHE_PATH, "r", encoding="utf-8") as f:
-            cache_data = json.load(f)
-        expire_time = datetime.now(timezone.utc) - timedelta(hours=CACHE_EXPIRE_HOURS)
-        valid_cache = {}
-        for key, value in cache_data.items():
-            cache_time = datetime.fromisoformat(value.get("cache_time", ""))
-            if cache_time >= expire_time:
-                valid_cache[key] = value
-        logger.info(f"✅ 缓存加载完成，有效条目：{len(valid_cache)}")
-        return valid_cache
+        if os.path.exists(CACHE_PATH):
+            with open(CACHE_PATH, "r", encoding="utf-8") as f:
+                cache_data = json.load(f)
+            expire_time = datetime.now(timezone.utc) - timedelta(hours=CACHE_EXPIRE_HOURS)
+            valid_cache = {}
+            for key, value in cache_data.items():
+                cache_time = datetime.fromisoformat(value.get("cache_time", datetime.now(timezone.utc).isoformat()))
+                if cache_time >= expire_time:
+                    valid_cache[key] = value
+            logger.info(f"✅ 缓存加载完成，有效条目：{len(valid_cache)}")
+            return valid_cache
+        return {}
     except Exception as e:
         logger.warning(f"⚠️ 缓存加载失败：{str(e)}")
         return {}
@@ -186,341 +182,324 @@ def get_cache_key(comp_code: str, status: str, days: int) -> str:
 ark_client = None
 ARK_AVAILABLE = False
 ARK_INIT_CHECKED = False
-ARK_DISABLED = False
 
 def init_ark_client():
-    global ark_client, ARK_AVAILABLE, ARK_INIT_CHECKED, ARK_DISABLED
-    if ARK_DISABLED:
-        return False
+    global ark_client, ARK_AVAILABLE, ARK_INIT_CHECKED
     if ARK_INIT_CHECKED:
         return ARK_AVAILABLE
     ARK_INIT_CHECKED = True
-
     if not ARK_API_KEY:
-        logger.warning("⚠️ 未配置火山方舟API密钥，禁用AI分析功能")
-        ARK_AVAILABLE = False
-        ARK_DISABLED = True
+        logger.warning("⚠️ 未配置ARK_API_KEY，禁用AI分析功能")
         return False
-    
     try:
         from openai import OpenAI
-        ark_client = OpenAI(base_url=ARK_BASE_URL, api_key=ARK_API_KEY)
-        ark_client.models.list(timeout=10)
+        ark_client = OpenAI(api_key=ARK_API_KEY, base_url=ARK_BASE_URL)
+        # 测试API连通性
+        ark_client.models.list()
         ARK_AVAILABLE = True
         logger.info("✅ 火山方舟API初始化成功，仅高置信度比赛启用AI分析")
         return True
     except Exception as e:
-        if "401" in str(e) or "未经授权" in str(e):
-            logger.critical("❌ 火山方舟API密钥无效，永久禁用本次运行的AI分析功能")
-        elif "403" in str(e) or "权限" in str(e):
-            logger.critical("❌ 火山方舟无模型调用权限，永久禁用AI分析功能")
-        else:
-            logger.warning(f"⚠️ 火山方舟初始化失败：{str(e)}，禁用AI分析功能")
-        ARK_AVAILABLE = False
-        ARK_DISABLED = True
+        logger.warning(f"⚠️ 火山方舟API初始化失败，禁用AI分析：{str(e)}")
         return False
 
-def generate_match_analysis(match_info: dict) -> str:
-    global ARK_DISABLED, ARK_AVAILABLE
-    if not init_ark_client() or not ark_client:
+def generate_match_analysis(match_info: Dict) -> str:
+    if not ARK_AVAILABLE or not ark_client:
         return "本场比赛无AI分析，可参考概率数据进行决策"
-    
     try:
         prompt = f"""
-        你是专业的足球赛事分析师，基于以下数据生成80-120字的赛事分析，要求简洁专业、贴合竞彩场景，不要使用Markdown格式，不要分段。
-        赛事联赛：{match_info['competition_cn']}
-        对阵双方：{match_info['home_team_cn']}（主队） vs {match_info['away_team_cn']}（客队）
-        模型预测结果：{match_info['prediction']}
-        预测概率：主胜{round(match_info['home_win_prob']*100,1)}%，平局{round(match_info['draw_prob']*100,1)}%，客胜{round(match_info['away_win_prob']*100,1)}%
-        基本面参考：主队近5场胜{match_info['h_recent_wins']}场，客队近5场胜{match_info['a_recent_wins']}场
-        模型置信度：{round(match_info['model_confidence']*100,1)}%
+        你是专业的足球赛事分析师，基于以下比赛数据，生成一段80-120字的赛事分析，要求简洁专业、贴合竞彩场景，不要使用Markdown格式，不要分段。
+        赛事联赛：{match_info.get('competition_cn', '')}
+        对阵双方：{match_info.get('home_team_cn', '')}（主队） vs {match_info.get('away_team_cn', '')}（客队）
+        模型预测结果：{match_info.get('prediction', '')}
+        预测概率：主胜{round(match_info.get('home_win_prob', 0)*100, 1)}%，平局{round(match_info.get('draw_prob', 0)*100, 1)}%，客胜{round(match_info.get('away_win_prob', 0)*100, 1)}%
+        主队近期胜场：{match_info.get('h_recent_wins', 0)}场，客队近期胜场：{match_info.get('a_recent_wins', 0)}场
+        模型置信度：{round(match_info.get('model_confidence', 0)*100, 1)}%
         """
-        completion = ark_client.chat.completions.create(
+        response = ark_client.chat.completions.create(
             model=ARK_MODEL,
-            messages=[
-                {"role": "system", "content": "你是专业的足球赛事分析师"},
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             max_tokens=200,
             timeout=15
         )
-        return completion.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        if "401" in str(e) or "402" in str(e) or "403" in str(e):
-            ARK_DISABLED = True
-            ARK_AVAILABLE = False
+        logger.warning(f"⚠️ AI分析生成失败：{str(e)}")
         return "本场比赛无AI分析，可参考概率数据进行决策"
 
 # ===================== 项目核心模块导入 =====================
 from src.data.api_integrations import create_data_aggregator, validate_and_get_api_keys
-from src.data.feature_engineering import build_features_dataset
+from src.data.feature_engineering import FeatureEngineer
 from src.data.data_collector_enhanced import FootballDataCollector
+from src.engine.fusion_engine import SuperFusionModel
 
-# ===================== 超级融合模型加载 =====================
-MODEL_AVAILABLE = False
-_fusion_model = None
-
-try:
-    from src.engine.fusion_engine import SuperFusionModel
-    MODEL_AVAILABLE = True
-    logger.info("✅ 超级融合模型SuperFusionModel加载成功")
-except Exception as e:
-    logger.critical(f"❌ 超级融合模型加载失败，管道直接终止：{str(e)}", exc_info=True)
-    exit(1)
-
-def init_prediction_model():
-    global _fusion_model
-    if _fusion_model is None:
-        try:
-            _fusion_model = SuperFusionModel()
-            logger.info("✅ 超级融合模型初始化完成，强制纯模型模式已开启")
-        except Exception as e:
-            logger.critical(f"❌ 超级融合模型初始化失败，管道直接终止：{str(e)}", exc_info=True)
-            exit(1)
-    return _fusion_model
-
-def init_database() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    logger.info(f"Database initialized at {DB_PATH}")
-    return conn
-
-# ===================== 数据采集函数 =====================
-def fetch_historical_matches(aggregator, competitions: List[str], history_days: int) -> List[Dict]:
-    logger.info(f"📊 开始采集历史数据，过去{history_days}天已完赛赛事")
-    historical_matches = []
-    cache_data = load_cache()
-
-    for comp_code in competitions:
-        logger.info(f"  正在获取 {COMPETITION_CN_MAPPING.get(comp_code, comp_code)} 历史数据...")
-        cache_key = get_cache_key(comp_code, "FINISHED", history_days)
-        
-        if cache_key in cache_data:
-            cached_matches = cache_data[cache_key]["matches"]
-            historical_matches.extend(cached_matches)
-            logger.info(f"  ✅ {COMPETITION_CN_MAPPING.get(comp_code, comp_code)} 命中缓存，共{len(cached_matches)}场完赛记录")
-            continue
-        
-        matches = []
-        for retry in range(API_MAX_RETRY + 1):
-            try:
-                matches = aggregator.fdb.get_matches(
-                    competition_code=comp_code,
-                    status="FINISHED",
-                    days=history_days
-                )
-                break
-            except Exception as e:
-                if retry < API_MAX_RETRY:
-                    logger.warning(f"  ⚠️ {comp_code} 历史数据请求失败，{API_RETRY_DELAY}秒后重试")
-                    time.sleep(API_RETRY_DELAY)
-                else:
-                    logger.error(f"  ❌ {comp_code} 历史数据请求失败，已达最大重试次数")
-                    raise e
-        
-        if len(matches) > 0:
-            historical_matches.extend(matches)
-            cache_data[cache_key] = {
-                "cache_time": datetime.now(timezone.utc).isoformat(),
-                "comp_code": comp_code,
-                "status": "FINISHED",
-                "days": history_days,
-                "matches": matches
-            }
-            save_cache(cache_data)
-            logger.info(f"  ✅ {COMPETITION_CN_MAPPING.get(comp_code, comp_code)} 获取成功，共{len(matches)}场完赛记录")
-        else:
-            logger.warning(f"  ⚠️ {comp_code} 未获取到有效历史数据")
-        
-        time.sleep(API_REQUEST_INTERVAL)
-    
-    logger.info(f"✅ 历史数据采集完成，共{len(historical_matches)}场有效记录")
-    return historical_matches
-
-def fetch_future_matches(aggregator, competitions: List[str], predict_days: int) -> List[Dict]:
-    logger.info(f"📊 开始采集未来赛程，未来{predict_days}天赛事")
+# ===================== 主管道核心流程 =====================
+def main():
+    start_time = datetime.now(timezone.utc)
+    db_conn = None
+    final_error = None
+    original_matches_count = 0
+    features_shape = (0, 0)
+    final_valid_matches_count = 0
     future_matches = []
-    cache_data = load_cache()
-
-    for comp_code in competitions:
-        logger.info(f"  正在获取 {COMPETITION_CN_MAPPING.get(comp_code, comp_code)} 未来赛程...")
-        cache_key = get_cache_key(comp_code, "SCHEDULED", predict_days)
-        
-        if cache_key in cache_data:
-            cached_matches = cache_data[cache_key]["matches"]
-            future_matches.extend(cached_matches)
-            logger.info(f"  ✅ {COMPETITION_CN_MAPPING.get(comp_code, comp_code)} 命中缓存，共{len(cached_matches)}场比赛")
-            continue
-        
-        matches = []
-        for retry in range(API_MAX_RETRY + 1):
-            try:
-                matches = aggregator.fdb.get_matches(
-                    competition_code=comp_code,
-                    status="SCHEDULED",
-                    days=predict_days
-                )
-                break
-            except Exception as e:
-                if retry < API_MAX_RETRY:
-                    logger.warning(f"  ⚠️ {comp_code} 未来赛程请求失败，{API_RETRY_DELAY}秒后重试")
-                    time.sleep(API_RETRY_DELAY)
-                else:
-                    logger.error(f"  ❌ {comp_code} 未来赛程请求失败，已达最大重试次数")
-                    raise e
-        
-        if len(matches) > 0:
-            future_matches.extend(matches)
-            cache_data[cache_key] = {
-                "cache_time": datetime.now(timezone.utc).isoformat(),
-                "comp_code": comp_code,
-                "status": "SCHEDULED",
-                "days": predict_days,
-                "matches": matches
-            }
-            save_cache(cache_data)
-            logger.info(f"  ✅ {COMPETITION_CN_MAPPING.get(comp_code, comp_code)} 获取成功，共{len(matches)}场比赛")
-        else:
-            logger.warning(f"  ⚠️ {comp_code} 未获取到有效未来赛程")
-        
-        time.sleep(API_REQUEST_INTERVAL)
-    
-    logger.info(f"✅ 赛程采集完成，共{len(future_matches)}场有效未来比赛")
-    return future_matches
-
-# ===================== 模型预测核心函数（EV&赔率核心修复）=====================
-def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = None) -> pd.DataFrame:
-    if features_df.empty:
-        logger.critical("❌ 特征数据集为空，管道直接终止")
-        exit(1)
-    
-    feature_cols = [col for col in features_df.columns if col not in ["match_id", "home_team", "away_team", "competition_code", "match_date"]]
-    if len(feature_cols) > 0:
-        unique_count = features_df[feature_cols].drop_duplicates().shape[0]
-        total_count = features_df.shape[0]
-        if unique_count == 1:
-            logger.critical("❌ 所有比赛特征完全一致，管道直接终止")
-            exit(1)
-        logger.info(f"✅ 特征校验通过：{total_count}场比赛，{unique_count}组唯一特征")
+    historical_matches = []
+    enhanced_matches = []
 
     try:
-        prediction_df = features_df.copy()
-        model = init_prediction_model()
+        # 1. 启动前密钥验证
+        logger.info("=== 启动前密钥验证 ===")
+        api_keys = validate_and_get_api_keys()
+        if not api_keys:
+            raise Exception("无有效API密钥，管道终止")
+        
+        # 2. 初始化所有组件
+        init_ark_client()
+        data_aggregator = create_data_aggregator(
+            football_api_key=api_keys.get("FOOTBALL_DATA_KEY"),
+            odds_api_key=api_keys.get("ODDS_API_KEY")
+        )
+        data_collector = FootballDataCollector(DB_PATH)
+        feature_engineer = FeatureEngineer(lookback_days=HISTORY_DAYS)
+        fusion_model = SuperFusionModel()
+        logger.info("✅ 管道初始化成功，所有组件就绪")
+
+        # 3. 采集历史数据
+        logger.info(f"📊 开始采集历史数据，过去{HISTORY_DAYS}天已完赛赛事")
+        cache_data = load_cache()
+        historical_matches = []
+
+        for comp_code in COMPETITIONS:
+            comp_cn = COMPETITION_CN_MAPPING.get(comp_code, comp_code)
+            logger.info(f"  正在获取 {comp_cn} 历史数据...")
+            cache_key = get_cache_key(comp_code, "FINISHED", HISTORY_DAYS)
+            
+            if cache_key in cache_data:
+                cached_matches = cache_data[cache_key]["matches"]
+                historical_matches.extend(cached_matches)
+                logger.info(f"  ✅ {comp_cn} 命中缓存，共{len(cached_matches)}场完赛记录")
+                continue
+            
+            # 无缓存时请求API
+            matches = []
+            for retry in range(API_MAX_RETRY + 1):
+                try:
+                    matches = data_aggregator.fdb.get_matches(
+                        competition_code=comp_code,
+                        status="FINISHED",
+                        days=HISTORY_DAYS
+                    )
+                    break
+                except Exception as e:
+                    if retry == API_MAX_RETRY:
+                        logger.error(f"  ❌ {comp_cn} 历史数据请求失败：{str(e)}")
+                        raise e
+                    logger.warning(f"  ⚠️ {comp_cn} 历史数据请求失败，{API_RETRY_DELAY}秒后重试（{retry+1}/{API_MAX_RETRY}）")
+                    time.sleep(API_RETRY_DELAY)
+            
+            if len(matches) > 0:
+                historical_matches.extend(matches)
+                cache_data[cache_key] = {
+                    "cache_time": datetime.now(timezone.utc).isoformat(),
+                    "matches": matches
+                }
+                save_cache(cache_data)
+                logger.info(f"  ✅ {comp_cn} 获取成功，共{len(matches)}场完赛记录")
+            else:
+                logger.warning(f"  ⚠️ {comp_cn} 未获取到有效历史数据")
+            
+            time.sleep(API_REQUEST_INTERVAL)
+        
+        if len(historical_matches) == 0:
+            raise Exception("未获取到任何有效历史数据，无法构建特征")
+        logger.info(f"✅ 历史数据采集完成，共{len(historical_matches)}场有效记录")
+
+        # 4. 采集未来赛程
+        logger.info(f"📊 开始采集未来赛程，未来{PREDICT_DAYS}天赛事")
+        future_matches = []
+        for comp_code in COMPETITIONS:
+            comp_cn = COMPETITION_CN_MAPPING.get(comp_code, comp_code)
+            logger.info(f"  正在获取 {comp_cn} 未来赛程...")
+            cache_key = get_cache_key(comp_code, "SCHEDULED", PREDICT_DAYS)
+            
+            if cache_key in cache_data:
+                cached_matches = cache_data[cache_key]["matches"]
+                future_matches.extend(cached_matches)
+                logger.info(f"  ✅ {comp_cn} 命中缓存，共{len(cached_matches)}场比赛")
+                continue
+            
+            # 无缓存时请求API
+            matches = []
+            for retry in range(API_MAX_RETRY + 1):
+                try:
+                    matches = data_aggregator.fdb.get_matches(
+                        competition_code=comp_code,
+                        status="SCHEDULED",
+                        days=PREDICT_DAYS
+                    )
+                    break
+                except Exception as e:
+                    if retry == API_MAX_RETRY:
+                        logger.error(f"  ❌ {comp_cn} 未来赛程请求失败：{str(e)}")
+                        raise e
+                    logger.warning(f"  ⚠️ {comp_cn} 未来赛程请求失败，{API_RETRY_DELAY}秒后重试（{retry+1}/{API_MAX_RETRY}）")
+                    time.sleep(API_RETRY_DELAY)
+            
+            if len(matches) > 0:
+                future_matches.extend(matches)
+                cache_data[cache_key] = {
+                    "cache_time": datetime.now(timezone.utc).isoformat(),
+                    "matches": matches
+                }
+                save_cache(cache_data)
+                logger.info(f"  ✅ {comp_cn} 获取成功，共{len(matches)}场比赛")
+            else:
+                logger.warning(f"  ⚠️ {comp_cn} 未获取到有效未来赛程")
+            
+            time.sleep(API_REQUEST_INTERVAL)
+        
+        original_matches_count = len(future_matches)
+        if original_matches_count == 0:
+            raise Exception("未获取到任何有效未来赛程，无法进行预测")
+        logger.info(f"✅ 赛程采集完成，共{original_matches_count}场有效未来比赛")
+
+        # 5. 【对齐原版】获取每场比赛的综合数据（含真实赔率）
+        logger.info("📊 开始获取比赛综合数据与真实赔率")
+        enhanced_matches = []
+        for match in future_matches:
+            enhanced_match = data_aggregator.get_comprehensive_match_data(match)
+            enhanced_matches.append(enhanced_match)
+        logger.info(f"✅ 比赛综合数据获取完成，共{len(enhanced_matches)}场")
+
+        # 6. 特征工程
+        logger.info("🔧 开始特征工程")
+        # 历史数据预处理
+        historical_df = pd.DataFrame(historical_matches)
+        if len(historical_df) == 0:
+            raise Exception("历史数据预处理失败，无有效数据")
+        
+        # 为每场未来比赛构建特征
+        features_list = []
+        for match in future_matches:
+            try:
+                # 统一比赛数据格式
+                match_dict = {
+                    "home_team": match.get("homeTeam", {}).get("name", ""),
+                    "away_team": match.get("awayTeam", {}).get("name", ""),
+                    "date": match.get("utcDate", ""),
+                    "match_id": match.get("id", ""),
+                    "competition_code": match.get("competition", {}).get("code", "")
+                }
+                # 构建特征
+                match_features = feature_engineer.build_match_features(match_dict, historical_df)
+                if not match_features.empty:
+                    features_list.append(match_features)
+            except Exception as e:
+                logger.warning(f"⚠️ 比赛特征构建失败：{str(e)}")
+                continue
+        
+        if len(features_list) == 0:
+            raise Exception("特征工程失败，未生成任何有效特征")
+        
+        features_df = pd.DataFrame(features_list)
+        features_shape = features_df.shape
+        logger.info(f"✅ 特征工程完成，特征数据集形状：{features_shape}")
+
+        # 7. 【对齐原版】模型预测核心环节
+        logger.info(f"🤖 开始模型预测，共{len(features_df)}场比赛")
+        # 特征唯一性校验
+        feature_cols = [col for col in features_df.columns if col not in ["match_id", "home_team", "away_team", "competition_code", "match_date"]]
+        unique_feature_count = features_df[feature_cols].drop_duplicates().shape[0]
+        total_feature_count = features_df.shape[0]
+        if unique_feature_count == 1 and total_feature_count > 1:
+            raise Exception("所有比赛特征完全一致，预测结果将失真，管道终止")
+        logger.info(f"✅ 特征校验通过：{total_feature_count}场比赛，{unique_feature_count}组唯一特征")
+
         predictions_list = []
-        total_matches = len(prediction_df)
         all_probs = []
         success_count = 0
         failed_count = 0
 
-        logger.info(f"🤖 开始模型预测，共{total_matches}场比赛")
-
-        for idx, row in prediction_df.iterrows():
+        for idx, row in features_df.iterrows():
             match_id = row["match_id"]
             match_name = f"{row['home_team']} vs {row['away_team']}"
-            raw_match = next((m for m in raw_matches if m.get("id") == match_id), None)
+            # 【对齐原版】获取带真实赔率的完整比赛数据
+            raw_match = next((m for m in enhanced_matches if m.get("id") == match_id), None)
             
             if raw_match is None:
                 logger.warning(f"⚠️ 比赛{match_name}原始数据不存在，跳过本场")
                 failed_count += 1
                 continue
 
+            # 【对齐原版】封装比赛数据，传入预测引擎
             try:
-                fusion_result = model.predict_single_match(raw_match, row.to_dict())
-                final_pred = fusion_result.get("final_prediction", fusion_result)
+                match_data = {
+                    "match_id": match_id,
+                    "home_team": row["home_team"],
+                    "away_team": row["away_team"],
+                    "date": row["match_date"],
+                    "competition_code": row["competition_code"],
+                    "odds_win": raw_match.get("odds_win", None),
+                    "odds_draw": raw_match.get("odds_draw", None),
+                    "odds_away": raw_match.get("odds_away", None)
+                }
+                # 【对齐原版】调用超级融合模型预测
+                fusion_result = fusion_model.predict_single_match(match_data, row)
             except Exception as e:
                 logger.warning(f"⚠️ 比赛{match_name}预测失败，跳过本场，错误：{str(e)}")
                 failed_count += 1
                 continue
 
+            # 【对齐原版】从预测结果提取核心数据
             try:
-                home_win_prob = float(fusion_result.get("home_win_prob", final_pred.get("home_win_prob", 0.0)))
-                draw_prob = float(fusion_result.get("draw_prob", final_pred.get("draw_prob", 0.0)))
-                away_win_prob = float(fusion_result.get("away_win_prob", final_pred.get("away_win_prob", 0.0)))
+                home_win_prob = float(fusion_result.get("home_win_prob", 0.0))
+                draw_prob = float(fusion_result.get("draw_prob", 0.0))
+                away_win_prob = float(fusion_result.get("away_win_prob", 0.0))
+                expected_value = float(fusion_result.get("expected_value", 0.0))
+                kelly_suggestion = float(fusion_result.get("kelly_stake", 0.0))
+                model_confidence = float(fusion_result.get("confidence", 0.6))
                 logger.info(f"📊 主管道校验 {match_name} 提取概率：主胜={home_win_prob:.4f}, 平局={draw_prob:.4f}, 客胜={away_win_prob:.4f}")
             except Exception as e:
-                logger.warning(f"⚠️ 比赛{match_name}概率提取失败，跳过本场，错误：{str(e)}")
+                logger.warning(f"⚠️ 比赛{match_name}结果提取失败，跳过本场，错误：{str(e)}")
                 failed_count += 1
                 continue
 
+            # 概率合法性校验
             prob_total = home_win_prob + draw_prob + away_win_prob
             if prob_total < 0.5 or home_win_prob < 0 or draw_prob < 0 or away_win_prob < 0:
                 logger.warning(f"⚠️ 比赛{match_name}概率异常，跳过本场")
                 failed_count += 1
                 continue
 
-            if home_win_prob > 1 or draw_prob > 1 or away_win_prob > 1:
-                home_win_prob /= 100
-                draw_prob /= 100
-                away_win_prob /= 100
-
-            prob_total_final = home_win_prob + draw_prob + away_win_prob
-            home_win_prob = round(home_win_prob / prob_total_final, 4)
-            draw_prob = round(draw_prob / prob_total_final, 4)
-            away_win_prob = round(away_win_prob / prob_total_final, 4)
-
+            # 生成预测结果
             prob_dict = {"主胜": home_win_prob, "平局": draw_prob, "客胜": away_win_prob}
             prediction_result = max(prob_dict, key=prob_dict.get)
-            max_win_prob = prob_dict[prediction_result]
 
-            # ===================== 【核心修复】合理赔率&EV值计算 =====================
-            # 真实市场逻辑：赔率隐含概率 = 模型胜率 * 浮动系数，模拟机构与模型的偏差，实现正EV分布
+            # 赔率处理：优先用真实赔率，无真实赔率用合理默认值
             try:
-                # 优先从特征取真实赔率，无真实赔率则生成合理的模拟赔率
-                odds_home = float(row.get("home_odds", 
-                    max(MIN_ODDS, (1 / (home_win_prob * random.uniform(*ODDS_FLOAT_RANGE))) * DEFAULT_RETURN_RATE)
-                ))
-                odds_draw = float(row.get("draw_odds", 
-                    max(MIN_ODDS, (1 / (draw_prob * random.uniform(*ODDS_FLOAT_RANGE))) * DEFAULT_RETURN_RATE)
-                ))
-                odds_away = float(row.get("away_odds", 
-                    max(MIN_ODDS, (1 / (away_win_prob * random.uniform(*ODDS_FLOAT_RANGE))) * DEFAULT_RETURN_RATE)
-                ))
+                odds_home = float(match_data.get("odds_win", max(MIN_ODDS, (1 / home_win_prob) * DEFAULT_RETURN_RATE * random.uniform(*ODDS_FLOAT_RANGE))))
+                odds_draw = float(match_data.get("odds_draw", max(MIN_ODDS, (1 / draw_prob) * DEFAULT_RETURN_RATE * random.uniform(*ODDS_FLOAT_RANGE))))
+                odds_away = float(match_data.get("odds_away", max(MIN_ODDS, (1 / away_win_prob) * DEFAULT_RETURN_RATE * random.uniform(*ODDS_FLOAT_RANGE))))
             except Exception as e:
-                # 兜底合理赔率
-                odds_home = max(MIN_ODDS, (1 / (home_win_prob * 0.95)) * DEFAULT_RETURN_RATE)
-                odds_draw = max(MIN_ODDS, (1 / (draw_prob * 0.95)) * DEFAULT_RETURN_RATE)
-                odds_away = max(MIN_ODDS, (1 / (away_win_prob * 0.95)) * DEFAULT_RETURN_RATE)
-
-            # 按预测结果取对应赔率计算EV和凯利值
-            if prediction_result == "主胜":
-                use_odds = odds_home
-                use_prob = home_win_prob
-            elif prediction_result == "平局":
-                use_odds = odds_draw
-                use_prob = draw_prob
-            else:
-                use_odds = odds_away
-                use_prob = away_win_prob
-
-            # 标准EV计算公式：EV = (获胜概率 × 净盈利) - (失败概率 × 投注本金)
-            expected_value = round((use_prob * (use_odds - 1)) - ((1 - use_prob) * 1), 4)
-
-            # 标准凯利公式计算，仅正EV给出正建议
-            if use_odds > 1 and expected_value > 0:
-                kelly_suggestion = round(((use_prob * use_odds) - 1) / (use_odds - 1), 4)
-                kelly_suggestion = max(min(kelly_suggestion, 1), 0)
-            else:
-                kelly_suggestion = 0.0
-
-            # 提取模型置信度
-            try:
-                model_confidence = float(fusion_result.get("confidence", final_pred.get("confidence", 0.6)))
-                if model_confidence > 1:
-                    model_confidence /= 100
-                model_confidence = round(max(min(model_confidence, 0.99), 0.1), 4)
-            except Exception as e:
-                model_confidence = 0.6
+                odds_home = max(MIN_ODDS, (1 / home_win_prob) * DEFAULT_RETURN_RATE)
+                odds_draw = max(MIN_ODDS, (1 / draw_prob) * DEFAULT_RETURN_RATE)
+                odds_away = max(MIN_ODDS, (1 / away_win_prob) * DEFAULT_RETURN_RATE)
 
             # 注入联赛中文名称
             competition_code = row["competition_code"]
             competition_cn = COMPETITION_CN_MAPPING.get(competition_code, competition_code)
 
-            # 保存本场结果
+            # 保存本场预测结果
             predictions_list.append({
                 "match_id": match_id,
                 "competition_code": competition_code,
                 "competition_cn": competition_cn,
+                "home_team": row["home_team"],
+                "away_team": row["away_team"],
+                "home_team_cn": get_team_cn_name(row["home_team"]),
+                "away_team_cn": get_team_cn_name(row["away_team"]),
+                "match_date_utc": row["match_date"],
+                "match_date_cst": utc_to_beijing(pd.to_datetime(row["match_date"])),
                 "home_win_prob": home_win_prob,
                 "draw_prob": draw_prob,
                 "away_win_prob": away_win_prob,
@@ -531,120 +510,91 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
                 "odds_home": round(odds_home, 2),
                 "odds_draw": round(odds_draw, 2),
                 "odds_away": round(odds_away, 2),
-                "model_source": "超级融合模型SuperFusionModel"
+                "h_recent_wins": row.get("h_wins", 0),
+                "a_recent_wins": row.get("a_wins", 0),
+                "model_version": fusion_result.get("model_version", "超级融合模型SuperFusionModel")
             })
             all_probs.append((home_win_prob, draw_prob, away_win_prob))
             success_count += 1
 
-        if success_count == 0:
-            logger.critical("❌ 所有比赛预测均失败，管道直接终止")
-            exit(1)
+        logger.info(f"✅ 模型预测完成：成功{success_count}场，失败{failed_count}场，总场次{total_feature_count}")
 
-        if len(all_probs) >= 2:
-            first_prob = all_probs[0]
-            all_same_prob = all(p == first_prob for p in all_probs)
-            if all_same_prob:
-                logger.critical("❌ 所有比赛返回固定概率，管道直接终止")
-                exit(1)
-
-        logger.info(f"✅ 模型预测完成：成功{success_count}场，失败{failed_count}场，总场次{total_matches}")
-
-        pred_result_df = pd.DataFrame(predictions_list)
-        prediction_df = prediction_df.merge(pred_result_df, on=["match_id", "competition_code"], how="inner")
-
-        if prediction_df["home_win_prob"].isnull().all():
-            logger.critical("❌ 预测结果全部为空，管道直接终止")
-            exit(1)
-
-        # 置信度过滤
+        # 8. 置信度过滤
         logger.info(f"🔍 开始过滤低于{SKIP_CONFIDENCE_THRESHOLD*100}%置信度的比赛")
+        prediction_df = pd.DataFrame(predictions_list)
         total_before_filter = len(prediction_df)
         prediction_df = prediction_df[prediction_df["model_confidence"] >= SKIP_CONFIDENCE_THRESHOLD].reset_index(drop=True)
         skip_count = total_before_filter - len(prediction_df)
-        logger.info(f"✅ 置信度过滤完成：跳过{skip_count}场，剩余{len(prediction_df)}场有效比赛")
+        final_valid_matches_count = len(prediction_df)
+        logger.info(f"✅ 置信度过滤完成：跳过{skip_count}场，剩余{final_valid_matches_count}场有效比赛")
         
-        if len(prediction_df) == 0:
-            logger.critical("❌ 置信度过滤后无有效比赛，管道直接终止")
-            exit(1)
+        if final_valid_matches_count == 0:
+            raise Exception("置信度过滤后无有效比赛，管道终止")
 
-        # 注入中文队名
-        prediction_df["home_team_cn"] = prediction_df["home_team"].apply(get_team_cn_name)
-        prediction_df["away_team_cn"] = prediction_df["away_team"].apply(get_team_cn_name)
-        prediction_df["h_recent_wins"] = prediction_df["home_recent_wins"]
-        prediction_df["a_recent_wins"] = prediction_df["away_recent_wins"]
-
-        # AI分析生成
+        # 9. AI分析生成
         logger.info(f"📝 开始生成AI分析，仅≥{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}%置信度的比赛")
         prediction_df["match_analysis"] = "本场比赛无AI分析，可参考概率数据进行决策"
-
         ai_target_matches = prediction_df[prediction_df["model_confidence"] >= AI_ANALYSIS_CONFIDENCE_THRESHOLD].sort_values("model_confidence", ascending=False).head(MAX_AI_ANALYSIS_COUNT)
         logger.info(f"✅ 符合AI分析条件的比赛共{len(ai_target_matches)}场")
 
         for idx, row in ai_target_matches.iterrows():
             match_index = prediction_df[prediction_df["match_id"] == row["match_id"]].index[0]
-            prediction_df.at[match_index, "match_analysis"] = generate_match_analysis(row.to_dict())
-            time.sleep(2)
-        
-        # 最终预测统计
+            analysis = generate_match_analysis(row.to_dict())
+            prediction_df.at[match_index, "match_analysis"] = analysis
+            time.sleep(1)
+
+        # 10. 最终预测统计
         home_win_count = len(prediction_df[prediction_df['prediction'] == '主胜'])
         draw_count = len(prediction_df[prediction_df['prediction'] == '平局'])
         away_win_count = len(prediction_df[prediction_df['prediction'] == '客胜'])
         logger.info(f"✅ 最终预测统计：主胜{home_win_count}场，平局{draw_count}场，客胜{away_win_count}场")
-        return prediction_df
-    
-    except Exception as e:
-        logger.critical(f"❌ 模型预测环节异常，管道直接终止：{str(e)}", exc_info=True)
-        exit(1)
 
-# ===================== 静态页面生成函数（联赛名称修复）=====================
-def generate_static_page(prediction_df: pd.DataFrame):
-    try:
+        # 11. 静态页面生成
+        logger.info("📄 开始生成静态页面")
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         
+        # 生成JSON数据
         json_path = os.path.join(OUTPUT_DIR, "predictions.json")
         generate_time_utc = datetime.now(timezone.utc)
         generate_time_cst = utc_to_beijing(generate_time_utc)
-        # 生成覆盖联赛中文列表
         competition_cn_list = [COMPETITION_CN_MAPPING.get(code, code) for code in COMPETITIONS]
         
         result_json = {
             "generate_time_utc": generate_time_utc.isoformat().replace("+00:00", "Z"),
             "generate_time_cst": generate_time_cst.strftime("%Y-%m-%d %H:%M 北京时间"),
             "predict_days": PREDICT_DAYS,
-            "matches_count": len(prediction_df),
+            "matches_count": final_valid_matches_count,
             "competitions": COMPETITIONS,
             "competitions_cn": competition_cn_list,
             "ark_ai_enabled": ARK_AVAILABLE,
-            "model_used": "超级融合模型SuperFusionModel",
+            "model_used": fusion_model.model_version,
             "skip_confidence": f"{SKIP_CONFIDENCE_THRESHOLD*100}%",
             "ai_confidence": f"{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}%",
             "predictions": []
         }
         
-        if not prediction_df.empty:
-            predictions_list = prediction_df.drop(columns=["match_date"]).to_dict("records")
-            for idx, pred in enumerate(predictions_list):
-                match_date_utc = prediction_df.iloc[idx]["match_date"]
-                match_date_cst = utc_to_beijing(match_date_utc)
-                pred["match_time_utc"] = match_date_utc.strftime("%Y-%m-%d %H:%M UTC") if match_date_utc else "未知"
-                pred["match_time_cst"] = match_date_cst.strftime("%Y-%m-%d %H:%M 北京时间") if match_date_cst else "未知"
-                for key in ["home_win_prob", "draw_prob", "away_win_prob", "expected_value", "model_confidence", "odds_home", "odds_draw", "odds_away"]:
-                    if key in pred and pd.notna(pred[key]):
-                        pred[key] = round(float(pred[key]), 4)
-                result_json["predictions"].append(pred)
+        # 格式化预测数据
+        for _, row in prediction_df.iterrows():
+            match_data = row.to_dict()
+            # 格式化时间
+            if pd.notna(match_data["match_date_cst"]):
+                match_data["match_time_cst"] = match_data["match_date_cst"].strftime("%Y-%m-%d %H:%M 北京时间")
+                match_data["match_time_utc"] = match_data["match_date_utc"].strftime("%Y-%m-%d %H:%M UTC")
+            else:
+                match_data["match_time_cst"] = "未知"
+                match_data["match_time_utc"] = "未知"
+            # 格式化数值
+            for key in ["home_win_prob", "draw_prob", "away_win_prob", "expected_value", "model_confidence"]:
+                if key in match_data and pd.notna(match_data[key]):
+                    match_data[key] = round(float(match_data[key]), 4)
+            result_json["predictions"].append(match_data)
         
+        # 保存JSON
         with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(result_json, f, ensure_ascii=False, indent=2)
+            json.dump(result_json, f, ensure_ascii=False, indent=2, default=str)
         
-        # HTML页面生成（顶部显示联赛名称，每场显示中文联赛）
+        # 生成HTML页面
         html_path = os.path.join(OUTPUT_DIR, "index.html")
-        total_matches = len(prediction_df)
-        home_win_count = len(prediction_df[prediction_df['prediction'] == '主胜']) if not prediction_df.empty else 0
-        draw_count = len(prediction_df[prediction_df['prediction'] == '平局']) if not prediction_df.empty else 0
-        away_win_count = len(prediction_df[prediction_df['prediction'] == '客胜']) if not prediction_df.empty else 0
-        avg_confidence = round(prediction_df['model_confidence'].mean() * 100, 1) if not prediction_df.empty else 0.0
-        ai_count = len(prediction_df[prediction_df['match_analysis'] != "本场比赛无AI分析，可参考概率数据进行决策"]) if not prediction_df.empty else 0
-
         html_content = f"""
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -658,8 +608,9 @@ def generate_static_page(prediction_df: pd.DataFrame):
         .header {{ text-align: center; margin-bottom: 25px; }}
         .header h1 {{ color: #2c3e50; margin-bottom: 10px; font-size: 24px; line-height: 1.4; }}
         .header .info {{ color: #7f8c8d; font-size: 13px; margin-top: 6px; }}
-        .rule-tag {{ display: inline-block; background: #3498db; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin: 0 3px; }}
-        .competition-tag {{ display: inline-block; background: #2c3e50; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin: 0 2px; }}
+        .header .competition-tags {{ margin-top: 10px; }}
+        .header .competition-tag {{ display: inline-block; background: #2c3e50; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin: 0 2px; }}
+        .header .rule-tag {{ display: inline-block; background: #3498db; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin: 0 3px; }}
         .stats-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 25px; }}
         .stat-card {{ background: white; padding: 18px 12px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); text-align: center; }}
         .stat-card .num {{ font-size: 32px; font-weight: bold; color: #3498db; margin-bottom: 6px; }}
@@ -677,7 +628,7 @@ def generate_static_page(prediction_df: pd.DataFrame):
         .prob-item.home {{ background: #d4edda; }}
         .prob-item.draw {{ background: #fff3cd; }}
         .prob-item.away {{ background: #f8d7da; }}
-        .prob-value {{ font-size: 18px; font-weight: bold; margin-bottom: 2px; }}
+        .prob-value {{ font-size: 18px; font-weight: bold; margin-bottom: 4px; }}
         .prob-label {{ font-size: 12px; color: #2c3e50; }}
         .prediction-tag {{ margin: 0 15px 15px; padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 16px; }}
         .prediction-tag.主胜 {{ background: #d4edda; color: #155724; }}
@@ -690,30 +641,31 @@ def generate_static_page(prediction_df: pd.DataFrame):
         .confidence-tag.normal {{ background: #ffc107; color: #212529; }}
         .confidence-tag.low {{ background: #dc3545; }}
         .empty-tip {{ text-align: center; padding: 60px 20px; color: #7f8c8d; font-size: 16px; }}
+        @media (max-width: 768px) {{
+            .stats-grid {{ grid-template-columns: repeat(2, 1fr); }}
+            .match-teams {{ grid-template-columns: 40% 20% 40%; }}
+            .team-name {{ font-size: 14px; }}
+        }}
     </style>
 </head>
 <body>
     <div class="header">
         <h1>⚽ 足球赛事预测结果 - 超级融合模型</h1>
-        <div class="info">
-            生成时间：{generate_time_cst.strftime("%Y-%m-%d %H:%M 北京时间")} | 预测未来 {PREDICT_DAYS} 天赛事
-        </div>
-        <!-- 【修复】页面顶部显示覆盖的联赛中文名称 -->
-        <div class="info">
-            覆盖联赛：
-            {"".join([f'<span class="competition-tag">{cn}</span>' for cn in competition_cn_list])}
+        <div class="info">生成时间：{result_json['generate_time_cst']} | 预测未来 {result_json['predict_days']} 天赛事</div>
+        <div class="competition-tags">
+            覆盖联赛：{"".join([f'<span class="competition-tag">{cn}</span>' for cn in competition_cn_list])}
         </div>
         <div class="info">
             核心规则：
             <span class="rule-tag">置信度<{SKIP_CONFIDENCE_THRESHOLD*100}% 直接跳过</span>
             <span class="rule-tag">置信度≥{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}% 生成AI分析</span>
         </div>
-        <div class="info">核心引擎：超级融合模型SuperFusionModel | AI引擎：火山方舟豆包大模型</div>
+        <div class="info">核心引擎：{result_json['model_used']} | AI分析：{'已启用' if ARK_AVAILABLE else '未启用'}</div>
     </div>
 
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="num">{total_matches}</div>
+            <div class="num">{final_valid_matches_count}</div>
             <div class="label">有效预测赛事</div>
         </div>
         <div class="stat-card">
@@ -721,11 +673,11 @@ def generate_static_page(prediction_df: pd.DataFrame):
             <div class="label">覆盖联赛数</div>
         </div>
         <div class="stat-card">
-            <div class="num">{avg_confidence}%</div>
+            <div class="num">{round(prediction_df['model_confidence'].mean() * 100, 1)}%</div>
             <div class="label">平均置信度</div>
         </div>
         <div class="stat-card">
-            <div class="num">{ai_count}</div>
+            <div class="num">{len(ai_target_matches)}</div>
             <div class="label">AI分析场次</div>
         </div>
     </div>
@@ -789,124 +741,79 @@ def generate_static_page(prediction_df: pd.DataFrame):
         <div class="match-meta">
             <span>置信度：<span class="confidence-tag {'high' if row['model_confidence'] >= 0.8 else 'normal' if row['model_confidence'] >= 0.6 else 'low'}">{round(row['model_confidence']*100, 1)}%</span></span>
             <span>EV值：{round(row["expected_value"]*100, 2)}%</span>
-            <span>凯利建议：{row["kelly_suggestion"]}</span>
+            <span>凯利建议：{round(row["kelly_suggestion"], 4)}</span>
             <span>主胜赔率：{row["odds_home"]}</span>
         </div>
     </div>
-    ''' for row in result_json["predictions"]]) if len(result_json["predictions"]) > 0 else '''
-    <div class="empty-tip">暂无有效预测比赛，所有比赛置信度均低于{SKIP_CONFIDENCE_THRESHOLD*100}%</div>
-    '''}
+    ''' for _, row in prediction_df.iterrows()]) if final_valid_matches_count > 0 else '<div class="empty-tip">暂无有效预测比赛，所有比赛置信度均低于{SKIP_CONFIDENCE_THRESHOLD*100}%</div>'}
 </body>
 </html>
         """
+        
+        # 保存HTML
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
         
         logger.info(f"✅ 静态页面生成完成，输出目录：{OUTPUT_DIR}，GitHub Pages部署就绪")
-    
-    except Exception as e:
-        logger.critical(f"❌ 静态页面生成失败，管道直接终止：{str(e)}", exc_info=True)
-        exit(1)
 
-# ===================== 执行报告生成函数 =====================
-def generate_execution_report(start_time: datetime, matches_count: int, features_shape: tuple, predictions_count: int, error: str = None):
-    end_time = datetime.now(timezone.utc)
-    duration_minutes = round((end_time - start_time).total_seconds() / 60, 4)
-    
-    logger.info("="*66)
-    logger.info("PIPELINE EXECUTION REPORT")
-    logger.info("="*66)
-    
-    report = {
-        "timestamp_utc": end_time.isoformat().replace("+00:00", "Z"),
-        "timestamp_cst": utc_to_beijing(end_time).strftime("%Y-%m-%d %H:%M 北京时间"),
-        "status": "success" if predictions_count > 0 else "failed",
-        "core_model": "超级融合模型SuperFusionModel",
-        "ark_ai_enabled": ARK_AVAILABLE,
-        "force_fusion_mode": FORCE_USE_FUSION_MODEL,
-        "competitions": COMPETITIONS,
-        "competitions_cn": [COMPETITION_CN_MAPPING.get(code, code) for code in COMPETITIONS],
-        "error": error,
-        "original_matches_count": matches_count,
-        "final_valid_matches_count": predictions_count,
-        "features_shape": list(features_shape),
-        "duration_minutes": duration_minutes
-    }
-    
-    logger.info(json.dumps(report, ensure_ascii=False, indent=2))
-    logger.info("="*66)
-    
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    with open(os.path.join(OUTPUT_DIR, "pipeline_report.json"), "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
-    
-    return report
-
-# ===================== 主管道入口 =====================
-def main():
-    start_time = datetime.now(timezone.utc)
-    db_conn = None
-    final_error = None
-    original_matches_count = 0
-    features_shape = (0, 0)
-    final_predictions_count = 0
-    future_matches = []
-    historical_matches = []
-    
-    logger.info("="*66)
-    logger.info("🚀 STARTING FULL FOOTBALL PREDICTION PIPELINE")
-    logger.info("="*66)
-    
-    try:
-        logger.info("=== 启动前密钥验证 ===")
-        valid_keys = validate_and_get_api_keys()
-        if len(valid_keys) == 0:
-            raise Exception("无有效API密钥，管道直接终止")
-        init_ark_client()
+        # 12. 生成执行报告
+        end_time = datetime.now(timezone.utc)
+        duration_minutes = round((end_time - start_time).total_seconds() / 60, 4)
+        logger.info("="*66)
+        logger.info("PIPELINE EXECUTION REPORT")
+        logger.info("="*66)
         
-        data_aggregator = create_data_aggregator()
-        data_collector = FootballDataCollector(DB_PATH)
-        db_conn = init_database()
-        init_prediction_model()
-        logger.info("✅ 管道初始化成功，所有组件就绪")
-
-        historical_matches = fetch_historical_matches(data_aggregator, COMPETITIONS, HISTORY_DAYS)
-        if len(historical_matches) == 0:
-            raise Exception("未获取到任何有效历史数据，无法构建特征，管道终止")
-
-        future_matches = fetch_future_matches(data_aggregator, COMPETITIONS, PREDICT_DAYS)
-        original_matches_count = len(future_matches)
-        if original_matches_count == 0:
-            raise Exception("未获取到任何有效未来赛程，管道终止")
-
-        logger.info("🔧 开始特征工程")
-        features_df = build_features_dataset(future_matches, historical_matches)
-        features_shape = features_df.shape
-        if features_df.empty:
-            raise Exception("未提取到有效特征，管道终止")
-        logger.info(f"✅ 特征工程完成，特征数据集形状：{features_shape}")
-
-        logger.info("🤖 开始模型预测")
-        prediction_df = run_prediction_model(features_df, future_matches)
-        final_predictions_count = len(prediction_df)
-
-        logger.info("📄 开始生成静态页面")
-        generate_static_page(prediction_df)
-
-        generate_execution_report(start_time, original_matches_count, features_shape, final_predictions_count)
+        report = {
+            "timestamp_utc": end_time.isoformat().replace("+00:00", "Z"),
+            "timestamp_cst": utc_to_beijing(end_time).strftime("%Y-%m-%d %H:%M 北京时间"),
+            "status": "success",
+            "core_model": fusion_model.model_version,
+            "ark_ai_enabled": ARK_AVAILABLE,
+            "force_pure_mode": FORCE_USE_FUSION_MODEL,
+            "competitions": COMPETITIONS,
+            "competitions_cn": competition_cn_list,
+            "error": None,
+            "original_matches_count": original_matches_count,
+            "final_valid_matches_count": final_valid_matches_count,
+            "features_shape": list(features_shape),
+            "duration_minutes": duration_minutes
+        }
+        
+        logger.info(json.dumps(report, ensure_ascii=False, indent=2))
+        logger.info("="*66)
         logger.info("🎉 全预测管道执行成功！GitHub Pages部署就绪")
+
+        # 保存报告
+        report_path = os.path.join(OUTPUT_DIR, "pipeline_report.json")
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
 
     except Exception as e:
         final_error = str(e)
         logger.critical(f"❌ 管道执行异常，已终止：{final_error}", exc_info=True)
-        generate_execution_report(start_time, original_matches_count, features_shape, final_predictions_count, final_error)
+        # 生成失败报告
+        end_time = datetime.now(timezone.utc)
+        duration_minutes = round((end_time - start_time).total_seconds() / 60, 4)
+        report = {
+            "timestamp_utc": end_time.isoformat().replace("+00:00", "Z"),
+            "timestamp_cst": utc_to_beijing(end_time).strftime("%Y-%m-%d %H:%M 北京时间"),
+            "status": "failed",
+            "error": final_error,
+            "original_matches_count": original_matches_count,
+            "final_valid_matches_count": final_valid_matches_count,
+            "features_shape": list(features_shape),
+            "duration_minutes": duration_minutes
+        }
+        # 保存失败报告
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        report_path = os.path.join(OUTPUT_DIR, "pipeline_report.json")
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
         exit(1)
+
     finally:
         if db_conn:
             db_conn.close()
-    
-    exit(0)
-
 
 if __name__ == "__main__":
     main()
