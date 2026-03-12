@@ -1,0 +1,2099 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>足球赛事预测结果 - 超级融合模型版</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: #f5f7fa; padding: 15px; max-width: 100%; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 25px; }
+        .header h1 { color: #2c3e50; margin-bottom: 10px; font-size: 24px; line-height: 1.4; }
+        .header .info { color: #7f8c8d; font-size: 13px; margin-top: 6px; }
+        .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 25px; }
+        .stat-card { background: white; padding: 18px 12px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); text-align: center; }
+        .stat-card .num { font-size: 32px; font-weight: bold; color: #3498db; margin-bottom: 6px; }
+        .stat-card .label { color: #7f8c8d; font-size: 13px; }
+        .match-card { background: white; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 15px; overflow: hidden; }
+        .match-header { background: #2c3e50; color: white; padding: 12px 15px; display: flex; justify-content: space-between; align-items: center; }
+        .match-header .league { font-weight: bold; font-size: 14px; }
+        .match-header .time { font-size: 12px; opacity: 0.9; }
+        .match-teams { padding: 20px 15px; display: grid; grid-template-columns: 42% 16% 42%; align-items: center; text-align: center; }
+        .team-name { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
+        .team-en { font-size: 11px; color: #7f8c8d; }
+        .vs { font-size: 18px; font-weight: bold; color: #3498db; }
+        .match-prob { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 15px 15px; }
+        .prob-item { text-align: center; padding: 8px; border-radius: 8px; }
+        .prob-item.home { background: #d4edda; }
+        .prob-item.draw { background: #fff3cd; }
+        .prob-item.away { background: #f8d7da; }
+        .prob-value { font-size: 18px; font-weight: bold; margin-bottom: 2px; }
+        .prob-label { font-size: 12px; color: #2c3e50; }
+        .prediction-tag { margin: 0 15px 15px; padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 16px; }
+        .prediction-tag.home { background: #d4edda; color: #155724; }
+        .prediction-tag.draw { background: #fff3cd; color: #856404; }
+        .prediction-tag.away { background: #f8d7da; color: #721c24; }
+        .analysis-box { margin: 0 15px 15px; padding: 12px; background: #f8f9fa; border-radius: 8px; font-size: 13px; line-height: 1.6; color: #34495e; }
+        .match-meta { display: flex; justify-content: space-between; padding: 10px 15px; border-top: 1px solid #ecf0f1; font-size: 12px; color: #7f8c8d; flex-wrap: wrap; gap: 8px; }
+        .empty { text-align: center; padding: 60px 20px; color: #7f8c8d; font-size: 16px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>⚽ 足球赛事预测结果 - 超级融合模型版</h1>
+        <div class="info">
+            生成时间：2026-03-12 17:52 UTC | 预测未来 7 天赛事
+        </div>
+        <div class="info">
+            核心引擎：你的超级融合模型SuperFusionModel | DeepSeek AI：❌ 未启用
+        </div>
+        <div class="info">
+            模型覆盖：47场 / 总场次47
+        </div>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card">
+            <div class="num">47</div>
+            <div class="label">预测赛事总数</div>
+        </div>
+        <div class="stat-card">
+            <div class="num">5</div>
+            <div class="label">覆盖联赛数</div>
+        </div>
+        <div class="stat-card">
+            <div class="num">60.0%</div>
+            <div class="label">平均模型置信度</div>
+        </div>
+        <div class="stat-card">
+            <div class="num">0</div>
+            <div class="label">主胜预测场次</div>
+        </div>
+    </div>
+
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PL</span>
+            <span class="time">2026-03-14 15:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">桑德兰</div>
+                <div class="team-en">Sunderland AFC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">布莱顿</div>
+                <div class="team-en">Brighton & Hove Albion FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PL</span>
+            <span class="time">2026-03-14 15:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">伯恩利</div>
+                <div class="team-en">Burnley FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">伯恩茅斯</div>
+                <div class="team-en">AFC Bournemouth</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PL</span>
+            <span class="time">2026-03-14 17:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">阿森纳</div>
+                <div class="team-en">Arsenal FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">埃弗顿</div>
+                <div class="team-en">Everton FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PL</span>
+            <span class="time">2026-03-14 17:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">切尔西</div>
+                <div class="team-en">Chelsea FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">纽卡斯尔联</div>
+                <div class="team-en">Newcastle United FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PL</span>
+            <span class="time">2026-03-14 20:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">西汉姆联</div>
+                <div class="team-en">West Ham United FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">曼城</div>
+                <div class="team-en">Manchester City FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PL</span>
+            <span class="time">2026-03-15 14:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">水晶宫</div>
+                <div class="team-en">Crystal Palace FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">利兹联</div>
+                <div class="team-en">Leeds United FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PL</span>
+            <span class="time">2026-03-15 14:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">曼联</div>
+                <div class="team-en">Manchester United FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">阿斯顿维拉</div>
+                <div class="team-en">Aston Villa FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PL</span>
+            <span class="time">2026-03-15 14:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">诺丁汉森林</div>
+                <div class="team-en">Nottingham Forest FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">富勒姆</div>
+                <div class="team-en">Fulham FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PL</span>
+            <span class="time">2026-03-15 16:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">利物浦</div>
+                <div class="team-en">Liverpool FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">托特纳姆热刺</div>
+                <div class="team-en">Tottenham Hotspur FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PL</span>
+            <span class="time">2026-03-16 20:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">布伦特福德</div>
+                <div class="team-en">Brentford FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">狼队</div>
+                <div class="team-en">Wolverhampton Wanderers FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PD</span>
+            <span class="time">2026-03-13 20:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">阿拉维斯</div>
+                <div class="team-en">Deportivo Alavés</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">比利亚雷亚尔</div>
+                <div class="team-en">Villarreal CF</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PD</span>
+            <span class="time">2026-03-14 13:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">赫罗纳</div>
+                <div class="team-en">Girona FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">毕尔巴鄂竞技</div>
+                <div class="team-en">Athletic Club</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PD</span>
+            <span class="time">2026-03-14 15:15 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">马德里竞技</div>
+                <div class="team-en">Club Atlético de Madrid</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">赫塔费</div>
+                <div class="team-en">Getafe CF</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PD</span>
+            <span class="time">2026-03-14 17:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">皇家奥维耶多</div>
+                <div class="team-en">Real Oviedo</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">瓦伦西亚</div>
+                <div class="team-en">Valencia CF</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PD</span>
+            <span class="time">2026-03-14 20:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">皇家马德里</div>
+                <div class="team-en">Real Madrid CF</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">埃尔切</div>
+                <div class="team-en">Elche CF</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PD</span>
+            <span class="time">2026-03-15 13:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">马略卡</div>
+                <div class="team-en">RCD Mallorca</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">西班牙人</div>
+                <div class="team-en">RCD Espanyol de Barcelona</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PD</span>
+            <span class="time">2026-03-15 15:15 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">巴塞罗那</div>
+                <div class="team-en">FC Barcelona</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">塞维利亚</div>
+                <div class="team-en">Sevilla FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PD</span>
+            <span class="time">2026-03-15 17:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">皇家贝蒂斯</div>
+                <div class="team-en">Real Betis Balompié</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">塞尔塔</div>
+                <div class="team-en">RC Celta de Vigo</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PD</span>
+            <span class="time">2026-03-15 20:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">皇家社会</div>
+                <div class="team-en">Real Sociedad de Fútbol</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">奥萨苏纳</div>
+                <div class="team-en">CA Osasuna</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">PD</span>
+            <span class="time">2026-03-16 20:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">巴列卡诺</div>
+                <div class="team-en">Rayo Vallecano de Madrid</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">莱万特</div>
+                <div class="team-en">Levante UD</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">BL1</span>
+            <span class="time">2026-03-13 19:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">门兴格拉德巴赫</div>
+                <div class="team-en">Borussia Mönchengladbach</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">圣保利</div>
+                <div class="team-en">FC St. Pauli 1910</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">BL1</span>
+            <span class="time">2026-03-14 14:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">勒沃库森</div>
+                <div class="team-en">Bayer 04 Leverkusen</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">拜仁慕尼黑</div>
+                <div class="team-en">FC Bayern München</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">BL1</span>
+            <span class="time">2026-03-14 14:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">霍芬海姆</div>
+                <div class="team-en">TSG 1899 Hoffenheim</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">沃尔夫斯堡</div>
+                <div class="team-en">VfL Wolfsburg</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">BL1</span>
+            <span class="time">2026-03-14 14:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">多特蒙德</div>
+                <div class="team-en">Borussia Dortmund</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">奥格斯堡</div>
+                <div class="team-en">FC Augsburg</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">BL1</span>
+            <span class="time">2026-03-14 14:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">法兰克福</div>
+                <div class="team-en">Eintracht Frankfurt</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">海登海姆</div>
+                <div class="team-en">1. FC Heidenheim 1846</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">BL1</span>
+            <span class="time">2026-03-14 17:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">汉堡</div>
+                <div class="team-en">Hamburger SV</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">科隆</div>
+                <div class="team-en">1. FC Köln</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">BL1</span>
+            <span class="time">2026-03-15 14:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">云达不莱梅</div>
+                <div class="team-en">SV Werder Bremen</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">美因茨</div>
+                <div class="team-en">1. FSV Mainz 05</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">BL1</span>
+            <span class="time">2026-03-15 16:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">弗赖堡</div>
+                <div class="team-en">SC Freiburg</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">柏林联合</div>
+                <div class="team-en">1. FC Union Berlin</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">BL1</span>
+            <span class="time">2026-03-15 18:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">斯图加特</div>
+                <div class="team-en">VfB Stuttgart</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">莱比锡红牛</div>
+                <div class="team-en">RB Leipzig</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">SA</span>
+            <span class="time">2026-03-13 19:45 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">都灵</div>
+                <div class="team-en">Torino FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">帕尔马</div>
+                <div class="team-en">Parma Calcio 1913</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">SA</span>
+            <span class="time">2026-03-14 14:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">国际米兰</div>
+                <div class="team-en">FC Internazionale Milano</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">亚特兰大</div>
+                <div class="team-en">Atalanta BC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">SA</span>
+            <span class="time">2026-03-14 17:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">那不勒斯</div>
+                <div class="team-en">SSC Napoli</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">莱切</div>
+                <div class="team-en">US Lecce</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">SA</span>
+            <span class="time">2026-03-14 19:45 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">乌迪内斯</div>
+                <div class="team-en">Udinese Calcio</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">尤文图斯</div>
+                <div class="team-en">Juventus FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">SA</span>
+            <span class="time">2026-03-15 11:30 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">维罗纳</div>
+                <div class="team-en">Hellas Verona FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">热那亚</div>
+                <div class="team-en">Genoa CFC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">SA</span>
+            <span class="time">2026-03-15 14:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">比萨</div>
+                <div class="team-en">AC Pisa 1909</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">卡利亚里</div>
+                <div class="team-en">Cagliari Calcio</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">SA</span>
+            <span class="time">2026-03-15 14:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">萨索洛</div>
+                <div class="team-en">US Sassuolo Calcio</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">博洛尼亚</div>
+                <div class="team-en">Bologna FC 1909</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">SA</span>
+            <span class="time">2026-03-15 17:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">科莫</div>
+                <div class="team-en">Como 1907</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">罗马</div>
+                <div class="team-en">AS Roma</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">SA</span>
+            <span class="time">2026-03-15 19:45 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">拉齐奥</div>
+                <div class="team-en">SS Lazio</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">AC米兰</div>
+                <div class="team-en">AC Milan</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">SA</span>
+            <span class="time">2026-03-16 19:45 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">克雷莫内塞</div>
+                <div class="team-en">US Cremonese</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">佛罗伦萨</div>
+                <div class="team-en">ACF Fiorentina</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">FL1</span>
+            <span class="time">2026-03-13 19:45 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">马赛</div>
+                <div class="team-en">Olympique de Marseille</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">欧塞尔</div>
+                <div class="team-en">AJ Auxerre</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">FL1</span>
+            <span class="time">2026-03-14 16:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">洛里昂</div>
+                <div class="team-en">FC Lorient</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">朗斯</div>
+                <div class="team-en">Racing Club de Lens</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">FL1</span>
+            <span class="time">2026-03-14 18:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">昂热</div>
+                <div class="team-en">Angers SCO</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">尼斯</div>
+                <div class="team-en">OGC Nice</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">FL1</span>
+            <span class="time">2026-03-14 20:05 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">摩纳哥</div>
+                <div class="team-en">AS Monaco FC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">布雷斯特</div>
+                <div class="team-en">Stade Brestois 29</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">FL1</span>
+            <span class="time">2026-03-15 14:00 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">斯特拉斯堡</div>
+                <div class="team-en">RC Strasbourg Alsace</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">巴黎FC</div>
+                <div class="team-en">Paris FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">FL1</span>
+            <span class="time">2026-03-15 16:15 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">勒阿弗尔</div>
+                <div class="team-en">Le Havre AC</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">里昂</div>
+                <div class="team-en">Olympique Lyonnais</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">FL1</span>
+            <span class="time">2026-03-15 16:15 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">梅斯</div>
+                <div class="team-en">FC Metz</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">图卢兹</div>
+                <div class="team-en">Toulouse FC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+    <div class="match-card">
+        <div class="match-header">
+            <span class="league">FL1</span>
+            <span class="time">2026-03-15 19:45 UTC</span>
+        </div>
+        <div class="match-teams">
+            <div>
+                <div class="team-name">雷恩</div>
+                <div class="team-en">Stade Rennais FC 1901</div>
+            </div>
+            <div class="vs">VS</div>
+            <div>
+                <div class="team-name">里尔</div>
+                <div class="team-en">Lille OSC</div>
+            </div>
+        </div>
+        <div class="match-prob">
+            <div class="prob-item home">
+                <div class="prob-value">33.0%</div>
+                <div class="prob-label">主胜</div>
+            </div>
+            <div class="prob-item draw">
+                <div class="prob-value">40.3%</div>
+                <div class="prob-label">平局</div>
+            </div>
+            <div class="prob-item away">
+                <div class="prob-value">26.7%</div>
+                <div class="prob-label">客胜</div>
+            </div>
+        </div>
+        <div class="prediction-tag draw">
+            最终预测：平局
+        </div>
+        <div class="analysis-box">
+            <strong>AI赛事分析：</strong>AI分析功能未启用，可参考概率数据进行决策
+        </div>
+        <div class="match-meta">
+            <span>数据来源：你的超级融合模型SuperFusionModel</span>
+            <span>置信度：60.0%</span>
+            <span>EV值：0.0%</span>
+        </div>
+    </div>
+    
+</body>
+</html>
+        

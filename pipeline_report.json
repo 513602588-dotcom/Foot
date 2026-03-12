@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-03-12T17:52:52.689069Z",
+  "status": "success",
+  "core_model": "你的超级融合模型SuperFusionModel",
+  "deepseek_enabled": false,
+  "force_fusion_mode": false,
+  "stages_completed": [
+    "api_key_validation",
+    "external_scrape",
+    "data_collection",
+    "historical_data_load",
+    "feature_engineering",
+    "model_prediction",
+    "static_page_generation"
+  ],
+  "error": null,
+  "warning": "",
+  "matches_count": 47,
+  "features_shape": [
+    47,
+    52
+  ],
+  "predictions_count": 47,
+  "duration_minutes": 0.074
+}
