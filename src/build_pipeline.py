@@ -1,8 +1,9 @@
 """
-足球赛事预测主管道 - 完整模型接入版
-已接入超级融合预测模型，保留你原本的6模型融合架构
-和所有修复后的模块100%兼容，直接复制替换即可使用
+足球赛事预测主管道 - 零错误修复版
+彻底解决logger未定义报错，完整保留融合预测模型
+直接复制替换整个src/build_pipeline.py文件即可
 """
+# ===================== 第一步：先初始化日志配置，绝对放在最开头！=====================
 import logging
 import os
 import sqlite3
@@ -11,39 +12,38 @@ from datetime import datetime, timezone
 from typing import List, Dict
 import pandas as pd
 
-# 导入修复后的基础模块
-from src.data.api_integrations import create_data_aggregator, validate_and_get_api_keys
-from src.data.feature_engineering import build_features_dataset
-from src.data.data_collector_enhanced import FootballDataCollector
-
-# ===================== 核心预测模型导入（你原本的商用模型）=====================
-try:
-    # 导入超级融合引擎（核心预测模型）
-    from src.engine.fusion_engine import SuperFusionModel
-    # 导入特征工程工具
-    from src.data.feature_engineering import FeatureEngineer
-    MODEL_AVAILABLE = True
-    logger.info("✅ 超级融合预测模型加载成功")
-except Exception as e:
-    MODEL_AVAILABLE = False
-    logger.warning(f"⚠️ 核心模型加载失败，将使用保底预测逻辑：{str(e)}")
-
-# ===================== 全局配置（和你的项目完全匹配）=====================
-COMPETITIONS = ['PL', 'PD', 'BL1', 'SA', 'FL1']
-PREDICT_DAYS = 7
-DB_PATH = "data/football.db"
-OUTPUT_DIR = "./public"
-# ================================================================================
-
-# 日志配置
+# 先配置logger，确保后面所有代码都能调用，不会出现未定义错误
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# 全局模型实例（避免重复初始化）
+# ===================== 第二步：再导入所有模块 =====================
+# 导入修复后的基础模块
+from src.data.api_integrations import create_data_aggregator, validate_and_get_api_keys
+from src.data.feature_engineering import build_features_dataset
+from src.data.data_collector_enhanced import FootballDataCollector
+
+# ===================== 第三步：模型导入（logger已经初始化完成，不会报错）=====================
+MODEL_AVAILABLE = False
 _fusion_model = None
+
+try:
+    # 导入超级融合引擎（核心预测模型）
+    from src.engine.fusion_engine import SuperFusionModel
+    MODEL_AVAILABLE = True
+    logger.info("✅ 超级融合预测模型加载成功")
+except Exception as e:
+    logger.warning(f"⚠️ 核心模型加载失败，将使用保底预测逻辑：{str(e)}")
+    MODEL_AVAILABLE = False
+
+# ===================== 全局配置 =====================
+COMPETITIONS = ['PL', 'PD', 'BL1', 'SA', 'FL1']
+PREDICT_DAYS = 7
+DB_PATH = "data/football.db"
+OUTPUT_DIR = "./public"
+# ================================================================================
 
 
 def init_prediction_model():
@@ -97,8 +97,7 @@ def load_historical_data() -> List[Dict]:
 def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = None) -> pd.DataFrame:
     """
     完整预测模型入口
-    优先使用你原本的超级融合模型，加载失败自动降级到保底逻辑
-    完全兼容特征工程输出的字段，无KeyError
+    优先使用超级融合模型，加载失败自动降级到保底逻辑
     """
     if features_df.empty:
         logger.warning("特征数据集为空，跳过模型预测")
@@ -109,7 +108,7 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
         prediction_df = features_df.copy()
         model = init_prediction_model()
 
-        # ===================== 优先使用超级融合模型（你原本的商用模型）=====================
+        # ===================== 优先使用超级融合模型 =====================
         if model is not None and raw_matches is not None:
             logger.info("🤖 使用超级融合模型进行预测")
             predictions_list = []
@@ -123,11 +122,11 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
                     if raw_match is None:
                         continue
 
-                    # 调用你原本的单场预测方法
+                    # 调用单场预测方法
                     match_features = row.to_dict()
                     fusion_result = model.predict_single_match(raw_match, match_features)
 
-                    # 提取预测结果，和你原本的输出格式完全匹配
+                    # 提取预测结果
                     final_pred = fusion_result.get("final_prediction", {})
                     predictions_list.append({
                         "match_id": match_id,
@@ -152,7 +151,7 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
         # ===================== 保底增强预测逻辑（模型加载失败时自动使用）=====================
         if "home_win_prob" not in prediction_df.columns:
             logger.info("⚠️ 使用增强版保底预测逻辑")
-            # 基于你的模型权重设计的保底逻辑，和原本的模型逻辑对齐
+            # 基于多模型权重设计的保底逻辑
             prediction_df["home_win_prob"] = 0.42 + \
                 (prediction_df["home_win_rate"] * 0.18) - \
                 (prediction_df["away_win_rate"] * 0.12) + \
@@ -218,7 +217,7 @@ def generate_static_page(prediction_df: pd.DataFrame):
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(result_json, f, ensure_ascii=False, indent=2)
         
-        # 2. 生成HTML静态页面，兼容模型输出的EV、置信度等字段
+        # 2. 生成HTML静态页面
         html_path = os.path.join(OUTPUT_DIR, "index.html")
         html_content = f"""
 <!DOCTYPE html>
