@@ -1,6 +1,7 @@
 """
 完整的足球预测管道
 从数据收集 -> 特征工程 -> 模型训练 -> 预测生成 -> 结果导出
+修复：除以零报错、环境变量密钥读取、空数据兜底、异常容错
 """
 
 import pandas as pd
@@ -10,6 +11,7 @@ import logging
 from pathlib import Path
 import json
 from typing import Dict, List, Tuple
+import os
 
 # 导入本地模块
 from src.data.api_integrations import create_data_aggregator
@@ -29,6 +31,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 从环境变量读取密钥，和api_integrations.py保持一致
+ENV_CONFIG = {
+    "API_FOOTBALL_KEY": os.getenv("API_FOOTBALL_KEY", ""),
+    "ODDS_API_KEY": os.getenv("ODDS_API_KEY", "")
+}
+
 class FootballPredictionPipeline:
     """完整的足球预测管道"""
     
@@ -46,9 +54,13 @@ class FootballPredictionPipeline:
             odds_api_key: The Odds API密钥
             db_path: 数据库路径
         """
+        # 优先使用传入的密钥，兜底用环境变量，确保密钥正确传递
+        self.football_api_key = football_api_key if football_api_key else ENV_CONFIG["API_FOOTBALL_KEY"]
+        self.odds_api_key = odds_api_key if odds_api_key else ENV_CONFIG["ODDS_API_KEY"]
+        
         self.data_aggregator = create_data_aggregator(
-            football_api_key=football_api_key,
-            odds_api_key=odds_api_key
+            football_api_key=self.football_api_key,
+            odds_api_key=self.odds_api_key
         )
         self.data_collector = DataCollector(db_path)
         self.feature_engineer = FeatureEngineer()
@@ -62,6 +74,8 @@ class FootballPredictionPipeline:
         self.predictions = None
         
         logger.info("Pipeline initialized successfully")
+        logger.info(f"Football API 密钥状态：{'已配置' if self.football_api_key else '未配置'}")
+        logger.info(f"Odds API 密钥状态：{'已配置' if self.odds_api_key else '未配置'}")
     
     def stage_0_scrape_external_data(self) -> None:
         """阶段0：运行所有外部爬虫，更新site/data目录。
@@ -110,6 +124,13 @@ class FootballPredictionPipeline:
                 if matches:
                     self.cache.set(f"matches_{comp}", matches)
                     all_matches.extend(matches)
+                else:
+                    logger.warning(f"  No matches found for {comp}")
+        
+        # 空数据兜底，避免转换DataFrame时报错
+        if not all_matches:
+            logger.warning("❌ No matches collected from all competitions")
+            return pd.DataFrame()
         
         # 转换为DataFrame
         matches_df = pd.DataFrame([
@@ -172,6 +193,11 @@ class FootballPredictionPipeline:
         """
         logger.info("🔧 Stage 3: Feature Engineering")
         
+        # 空数据兜底
+        if matches_df.empty:
+            logger.warning("❌ No matches available for feature engineering")
+            return pd.DataFrame()
+        
         features_list = []
         
         for idx, match in matches_df.iterrows():
@@ -187,6 +213,11 @@ class FootballPredictionPipeline:
             except Exception as e:
                 logger.error(f"Error extracting features for match {idx}: {e}")
                 continue
+        
+        # 空特征兜底
+        if not features_list:
+            logger.warning("❌ No features extracted from matches")
+            return pd.DataFrame()
         
         features_df = pd.DataFrame(features_list)
         logger.info(f"✅ Extracted features for {len(features_df)} matches")
@@ -245,6 +276,11 @@ class FootballPredictionPipeline:
         """
         logger.info("🔮 Stage 5: Generating Predictions")
         
+        # 空数据兜底
+        if matches_df.empty or features_df.empty:
+            logger.warning("❌ No matches or features available for prediction")
+            return []
+        
         predictions = []
         
         for idx, (_, match) in enumerate(matches_df.iterrows()):
@@ -285,6 +321,11 @@ class FootballPredictionPipeline:
             筛选后的推荐列表
         """
         logger.info("🏆 Stage 6: Filtering Top Picks")
+        
+        # 空数据兜底
+        if not predictions:
+            logger.warning("❌ No predictions available for filtering")
+            return []
         
         top_picks = []
         
@@ -424,6 +465,14 @@ class FootballPredictionPipeline:
             results['stages_completed'].append('data_collection')
             results['matches_count'] = len(matches_df)
             
+            # 【核心兜底】0场比赛时，提前终止，避免后续报错
+            if matches_df.empty:
+                logger.error("❌ Pipeline terminated: No matches collected from API")
+                results['status'] = 'completed_with_warning'
+                results['warning'] = 'No matches collected from API, please check API key and request status'
+                results['duration_minutes'] = (datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60
+                return results
+            
             # Stage 2: 加载历史数据 (可选)
             if stage_load_historical:
                 self.stage_2_load_historical_data()
@@ -434,6 +483,14 @@ class FootballPredictionPipeline:
             results['stages_completed'].append('feature_engineering')
             results['features_shape'] = features_df.shape
             
+            # 特征为空兜底
+            if features_df.empty:
+                logger.error("❌ Pipeline terminated: No features extracted from matches")
+                results['status'] = 'completed_with_warning'
+                results['warning'] = 'No features extracted from matches'
+                results['duration_minutes'] = (datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60
+                return results
+            
             # Stage 4: 训练模型 (可选)
             if stage_train_models:
                 self.stage_4_train_models(matches_df, features_df)
@@ -443,6 +500,14 @@ class FootballPredictionPipeline:
             all_predictions = self.stage_5_generate_predictions(matches_df, features_df)
             results['stages_completed'].append('prediction_generation')
             results['predictions_count'] = len(all_predictions)
+            
+            # 预测为空兜底
+            if not all_predictions:
+                logger.error("❌ Pipeline terminated: No predictions generated")
+                results['status'] = 'completed_with_warning'
+                results['warning'] = 'No predictions generated from matches'
+                results['duration_minutes'] = (datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60
+                return results
             
             # Stage 6: 筛选顶级推荐
             top_picks = self.stage_6_filter_top_picks(all_predictions)
@@ -462,7 +527,12 @@ class FootballPredictionPipeline:
             logger.info(f"📊 Results Summary:")
             logger.info(f"   - Total predictions: {results['predictions_count']}")
             logger.info(f"   - Top picks: {results['top_picks_count']}")
-            logger.info(f"   - Top/Total ratio: {results['top_picks_count']/results['predictions_count']*100:.1f}%")
+            
+            # 【致命修复】彻底解决除以零报错
+            top_total_ratio = 0.0
+            if results['predictions_count'] > 0:
+                top_total_ratio = results['top_picks_count'] / results['predictions_count'] * 100
+            logger.info(f"   - Top/Total ratio: {top_total_ratio:.1f}%")
             
         except Exception as e:
             logger.error(f"❌ Pipeline failed: {e}")
@@ -476,11 +546,8 @@ class FootballPredictionPipeline:
 def main():
     """主函数"""
     
-    # 初始化管道
-    pipeline = FootballPredictionPipeline(
-        football_api_key=None,  # 设置你的API密钥
-        odds_api_key=None       # 设置你的API密钥
-    )
+    # 初始化管道，自动读取环境变量密钥，无需手动填写
+    pipeline = FootballPredictionPipeline()
     
     # 运行完整管道
     results = pipeline.run_full_pipeline(
