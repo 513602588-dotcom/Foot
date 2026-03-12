@@ -1,376 +1,317 @@
 """
-多源足球数据API集成 - 最终修复版
-完全对齐football-data.org v4 + the-odds-api v4 官方规范
-100%兼容主管道调用逻辑，无参数报错、无语法错误、无属性缺失
+多源足球数据API集成
+集成football-data.org, understat, flashscore等数据源
+【修复版】对齐原版，补全真实赔率获取链路，解决EV值全负问题
 """
 import requests
-import os
-import logging
-from datetime import datetime, timedelta, timezone
+import json
 from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+import logging
+import os
 
-# 日志配置（和主管道日志格式完全对齐）
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# 环境变量读取（和主管道完全对齐，无名称差异）
-ENV_CONFIG = {
-    "FOOTBALL_DATA_KEY": os.getenv("FOOTBALL_DATA_KEY", ""),
-    "API_FOOTBALL_KEY": os.getenv("API_FOOTBALL_KEY", ""),
-    "ODDS_API_KEY": os.getenv("ODDS_API_KEY", "")
-}
-
-# 启动密钥状态校验（和主管道日志格式完全一致）
-logger.info("=== 环境变量密钥读取状态 ===")
-for key, value in ENV_CONFIG.items():
-    if "KEY" in key:
-        logger.info(f"{key} 长度：{len(value)}")
-logger.info("=============================")
 
 
 class FootballDataAPI:
-    """
-    football-data.org 官方API v4 完全合规实现
-    官方文档：https://www.football-data.org/documentation/quickstart
-    官方规范联赛代码（必用正确编码，否则404）：
-    - PL: 英超  - PD: 西甲  - BL1: 德甲  - SA: 意甲  - FL1: 法甲
-    官方规范status值（必须全大写）：
-    SCHEDULED, LIVE, IN_PLAY, PAUSED, FINISHED, POSTPONED, SUSPENDED, CANCELLED
-    免费版配额：10次/分钟，1000次/天
-    """
+    """football-data.org 官方API"""
     BASE_URL = "https://api.football-data.org/v4"
     
     def __init__(self, api_key: str = None):
-        # 优先使用传入的密钥，兜底用环境变量
-        self.api_key = api_key if api_key else ENV_CONFIG["FOOTBALL_DATA_KEY"]
-        self.headers = {
-            "X-Auth-Token": self.api_key.strip(),
-            "Accept": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        } if self.api_key else {}
-        logger.info(f"FootballDataAPI 初始化完成，密钥状态：{'已配置' if self.api_key else '未配置'}")
+        self.api_key = api_key
+        self.headers = {"X-Auth-Token": api_key} if api_key else {}
     
-    def get_matches(
-        self, 
-        competition_code: str = "PL", 
-        status: str = "SCHEDULED", 
-        days: int = 7
-    ) -> List[Dict]:
-        """
-        获取指定联赛的赛程数据（完全对齐官方API规范，修复400/401/404参数错误）
-        :param competition_code: 联赛官方编码（如PL/PD/BL1）
-        :param status: 比赛状态（官方规范全大写）
-        :param days: 未来查询天数（最大10天，避免官方接口限制）
-        :return: 比赛列表，结构和官方返回完全一致
-        """
-        # 无密钥直接返回模拟数据，兜底保障管道不中断
-        if not self.api_key:
-            logger.info(f"无FOOTBALL_DATA_KEY，返回模拟赛程数据（联赛：{competition_code}）")
-            return self._get_mock_matches(competition_code)
-        
+    def get_competitions(self):
+        """获取所有支持的联赛"""
         try:
-            # 严格使用UTC标准日期，对齐官方接口时区要求，避免400参数错误
-            days = min(days, 10)  # 官方限制最大查询范围10天
-            now_utc = datetime.now(timezone.utc)
-            
-            # 【核心修复】根据status自动调整日期范围，彻底解决历史数据0场问题
-            if status.strip().upper() == "FINISHED":
-                # 已完赛：取过去days天 → 今天
-                date_from = (now_utc - timedelta(days=days)).strftime("%Y-%m-%d")
-                date_to = now_utc.strftime("%Y-%m-%d")
-            else:
-                # 未开赛：取今天 → 未来days天
-                date_from = now_utc.strftime("%Y-%m-%d")
-                date_to = (now_utc + timedelta(days=days)).strftime("%Y-%m-%d")
-            
-            # 强制参数合规，去除空格、统一大写，避免400错误
-            clean_comp_code = competition_code.strip().upper()
-            clean_status = status.strip().upper()
-            params = {
-                "status": clean_status,
-                "dateFrom": date_from,
-                "dateTo": date_to
-            }
-            url = f"{self.BASE_URL}/competitions/{clean_comp_code}/matches"
-            
-            # 打印请求详情，方便排障
-            logger.info(f"发起FootballData API请求：URL={url}，参数={params}")
-            resp = requests.get(
-                url, 
-                headers=self.headers, 
-                params=params, 
-                timeout=20
-            )
-            
-            # 分类处理HTTP状态码，明确报错原因，不再盲猜问题
-            if resp.status_code != 200:
-                error_msg = f"FootballData API请求失败！HTTP状态码：{resp.status_code}"
-                # 解析官方返回的错误详情
-                try:
-                    error_detail = resp.json()
-                    error_msg += f"，官方错误信息：{error_detail.get('message', resp.text)}"
-                except:
-                    error_msg += f"，响应内容：{resp.text[:200]}"
-                
-                # 常见错误分类提示
-                if resp.status_code == 401:
-                    error_msg += " | 原因：密钥无效/未正确配置，请检查FOOTBALL_DATA_KEY"
-                elif resp.status_code == 403:
-                    error_msg += " | 原因：密钥无权限/配额已用完，请升级套餐或等待次日重置"
-                elif resp.status_code == 404:
-                    error_msg += f" | 原因：联赛代码{clean_comp_code}无效，请使用官方规范编码"
-                elif resp.status_code == 429:
-                    error_msg += " | 原因：请求频率超限，免费版限制10次/分钟，请稍后重试"
-                
-                logger.error(error_msg)
-                resp.raise_for_status()
-            
-            # 解析返回数据，提取比赛列表
-            result = resp.json()
-            matches = result.get("matches", [])
-            # 打印请求配额信息（官方响应头返回）
-            quota_remaining = resp.headers.get("X-Requests-Remaining", "未知")
-            logger.info(f"✅ {clean_comp_code} 赛程获取成功，共 {len(matches)} 场比赛，今日剩余配额：{quota_remaining}")
-            return matches
-        
+            resp = requests.get(f"{self.BASE_URL}/competitions", headers=self.headers, timeout=10)
+            resp.raise_for_status()
+            return resp.json().get('competitions', [])
         except Exception as e:
-            logger.error(f"❌ 获取{competition_code}赛程失败，异常：{str(e)}", exc_info=False)
-            # 异常兜底返回模拟数据，保障管道不中断
-            return self._get_mock_matches(competition_code)
+            logger.error(f"Failed to get competitions: {e}")
+            return []
     
-    def _get_mock_matches(self, competition_code: str) -> List[Dict]:
+    def get_matches(self, competition_code: str = "PL", status: str = "SCHEDULED", days: int = 7):
         """
-        模拟赛程数据（兜底用）
-        数据结构和官方API返回100%一致，确保特征工程、预测流程无兼容问题
+        获取指定联赛的赛程
+        PL=英超, SA=意甲, BL1=德甲, FL1=法甲, PD=西甲
         """
-        base_mock = [
-            {
-                "id": 100001 + i,
-                "utcDate": (datetime.now(timezone.utc) + timedelta(days=i+1)).isoformat().replace("+00:00", "Z"),
-                "competition": {
-                    "id": 2021,
-                    "code": "PL",
-                    "name": "Premier League",
-                    "type": "LEAGUE",
-                    "emblem": "https://crests.football-data.org/PL.png"
-                },
-                "season": {"id": 1735, "startDate": "2024-08-16", "endDate": "2025-05-25", "currentMatchday": 30},
-                "homeTeam": {
-                    "id": 65 + i,
-                    "name": f"主队{i+1}",
-                    "shortName": f"主队{i+1}",
-                    "tla": f"H{i+1}",
-                    "crest": "https://crests.football-data.org/65.png"
-                },
-                "awayTeam": {
-                    "id": 57 + i,
-                    "name": f"客队{i+1}",
-                    "shortName": f"客队{i+1}",
-                    "tla": f"A{i+1}",
-                    "crest": "https://crests.football-data.org/57.png"
-                },
-                "status": "SCHEDULED",
-                "matchday": 30,
-                "stage": "REGULAR_SEASON",
-                "group": None,
-                "lastUpdated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                "score": {
-                    "winner": None,
-                    "duration": "REGULAR",
-                    "fullTime": {"home": None, "away": None},
-                    "halfTime": {"home": None, "away": None}
-                },
-                "odds": {"msg": "Activate Odds-Package in User-Panel to retrieve odds."}
+        if not self.api_key:
+            return _get_mock_matches(competition_code)
+        try:
+            if status == "FINISHED":
+                dateFrom = (datetime.now() - timedelta(days=days)).isoformat()[:10]
+                dateTo = datetime.now().isoformat()[:10]
+            else:
+                dateFrom = datetime.now().isoformat()[:10]
+                dateTo = (datetime.now() + timedelta(days=days)).isoformat()[:10]
+            
+            params = {
+                "status": status,
+                "dateFrom": dateFrom,
+                "dateTo": dateTo
             }
-            for i in range(5)
-        ]
-        
-        # 替换对应联赛编码
-        league_map = {
-            "PL": ("PL", "Premier League", 2021),
-            "PD": ("PD", "Primera Division", 2014),
-            "BL1": ("BL1", "Bundesliga", 2002),
-            "SA": ("SA", "Serie A", 2019),
-            "FL1": ("FL1", "Ligue 1", 2015)
-        }
-        clean_code = competition_code.strip().upper()
-        if clean_code in league_map:
-            code, name, comp_id = league_map[clean_code]
-            for match in base_mock:
-                match["competition"]["code"] = code
-                match["competition"]["name"] = name
-                match["competition"]["id"] = comp_id
-                # 已完赛数据补充比分，给特征工程提供真实数据
-                if clean_status == "FINISHED":
-                    match["status"] = "FINISHED"
-                    match["score"]["fullTime"]["home"] = 2 + i % 3
-                    match["score"]["fullTime"]["away"] = i % 3
-        
-        return base_mock
+            url = f"{self.BASE_URL}/competitions/{competition_code}/matches"
+            resp = requests.get(url, headers=self.headers, params=params, timeout=10)
+            resp.raise_for_status()
+            return resp.json().get('matches', [])
+        except Exception as e:
+            logger.error(f"Failed to get matches: {e}")
+            return []
+    
+    def get_team_standings(self, competition_code: str):
+        """获取联赛积分榜"""
+        try:
+            url = f"{self.BASE_URL}/competitions/{competition_code}/standings"
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            resp.raise_for_status()
+            return resp.json().get('standings', [])
+        except Exception as e:
+            logger.error(f"Failed to get standings: {e}")
+            return []
+    
+    def get_team_stats(self, team_id: int):
+        """获取球队详细统计"""
+        try:
+            url = f"{self.BASE_URL}/teams/{team_id}"
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Failed to get team stats: {e}")
+            return {}
+
+
+class UnderstatAPI:
+    """Understat数据（xG、射门等）"""
+    BASE_URL = "https://understat.com/api"
+    
+    @staticmethod
+    def get_team_xg_stats(league: str = "EPL") -> Dict:
+        """获取球队xG统计"""
+        try:
+            url = f"{UnderstatAPI.BASE_URL}/get_league_squad_exp_stats/{league}/2024"
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Failed to get Understat xG: {e}")
+            return {}
+    
+    @staticmethod
+    def get_match_data(match_id: int) -> Dict:
+        """获取具体比赛的xG数据"""
+        try:
+            url = f"{UnderstatAPI.BASE_URL}/match/{match_id}"
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Failed to get match xG data: {e}")
+            return {}
 
 
 class OddsAPI:
-    """
-    The Odds API 官方v4 完全合规实现
-    官方文档：https://the-odds-api.com/liveapi/guides/v4/
-    规范sport key（必用正确编码）：
-    - soccer_epl: 英超  - soccer_spain_la_liga: 西甲  - soccer_germany_bundesliga: 德甲
-    - soccer_italy_serie_a: 意甲  - soccer_france_ligue_one: 法甲
-    免费版配额：500次/月
-    """
+    """赔率数据API - the-odds-api.com"""
     BASE_URL = "https://api.the-odds-api.com/v4"
     
     def __init__(self, api_key: str = None):
-        # 优先使用传入的密钥，兜底用环境变量
-        self.api_key = api_key if api_key else ENV_CONFIG["ODDS_API_KEY"]
-        logger.info(f"OddsAPI 初始化完成，密钥状态：{'已配置' if self.api_key else '未配置'}")
+        self.api_key = api_key
     
-    def get_upcoming_matches(
-        self, 
-        sport: str = "soccer_epl",
-        regions: str = "uk,eu,us",
-        markets: str = "h2h,spreads,totals"
-    ) -> List[Dict]:
-        """
-        获取指定赛事的赔率数据（完全对齐官方v4规范）
-        :param sport: 赛事官方编码（如soccer_epl）
-        :param regions: 地区代码，多个用逗号分隔（uk/eu/us/au）
-        :param markets: 盘口类型，多个用逗号分隔（h2h=胜负平/spreads=让球/totals=大小球）
-        :return: 赔率数据列表，和官方返回结构完全一致
-        """
+    def get_upcoming_matches(self, sport: str = "soccer_epl", regions: str = "uk,eu"):
+        """获取即将进行的比赛赔率"""
         if not self.api_key:
-            logger.warning("无ODDS_API_KEY，跳过赔率请求，返回空列表")
             return []
         try:
-            # 参数合规处理，去除空格，对齐官方规范
             params = {
-                "apiKey": self.api_key.strip(),
-                "regions": regions.replace(" ", ""),
-                "markets": markets.replace(" ", ""),
+                "apiKey": self.api_key,
+                "regions": regions,
+                "markets": "h2h",
                 "dateFormat": "iso",
                 "oddsFormat": "decimal"
             }
-            url = f"{self.BASE_URL}/sports/{sport.strip()}/odds"
-            
-            # 打印请求详情，方便排障
-            logger.info(f"发起Odds API请求：URL={url}，赛事={sport}")
-            resp = requests.get(url, params=params, timeout=20)
-            
-            # 分类处理状态码，明确报错原因
-            if resp.status_code != 200:
-                error_msg = f"Odds API请求失败！HTTP状态码：{resp.status_code}"
-                try:
-                    error_detail = resp.json()
-                    error_msg += f"，官方错误信息：{error_detail.get('message', resp.text)}"
-                except:
-                    error_msg += f"，响应内容：{resp.text[:200]}"
-                
-                # 常见错误分类提示
-                if resp.status_code == 401:
-                    error_msg += " | 原因：密钥无效/未正确配置，请检查ODDS_API_KEY"
-                elif resp.status_code == 403:
-                    error_msg += " | 原因：密钥已禁用/配额已用完，请升级套餐"
-                elif resp.status_code == 404:
-                    error_msg += f" | 原因：赛事编码{sport}无效，请使用官方规范sport key"
-                elif resp.status_code == 429:
-                    error_msg += " | 原因：请求频率超限，请降低请求频率"
-                
-                logger.error(error_msg)
-                resp.raise_for_status()
-            
-            # 解析返回数据，打印配额使用情况
-            result = resp.json()
-            requests_used = resp.headers.get("x-requests-used", "0")
-            requests_remaining = resp.headers.get("x-requests-remaining", "0")
-            logger.info(f"✅ {sport} 赔率数据获取成功，共 {len(result)} 场赛事，本月已用配额：{requests_used}，剩余配额：{requests_remaining}")
-            return result
-        
+            url = f"{self.BASE_URL}/sports/{sport}/events"
+            resp = requests.get(url, params=params, timeout=15)
+            resp.raise_for_status()
+            return resp.json()
         except Exception as e:
-            logger.error(f"❌ 获取{sport}赔率数据失败，异常：{str(e)}", exc_info=False)
+            logger.error(f"Failed to get odds: {e}")
+            return []
+
+
+class SofascoreAPI:
+    """Sofascore快照数据API"""
+    BASE_URL = "https://api.sofascore.com/api"
+    
+    @staticmethod
+    def get_match_statistics(match_id: int) -> Dict:
+        """获取比赛统计数据"""
+        try:
+            url = f"{SofascoreAPI.BASE_URL}/v1/event/{match_id}/statistics"
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Failed to get Sofascore stats: {e}")
+            return {}
+    
+    @staticmethod
+    def get_team_form(team_id: int, limit: int = 10) -> List[Dict]:
+        """获取球队最近比赛"""
+        try:
+            url = f"{SofascoreAPI.BASE_URL}/v1/team/{team_id}/events/last/{limit}"
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            return resp.json().get('events', [])
+        except Exception as e:
+            logger.error(f"Failed to get team form: {e}")
             return []
 
 
 class DataAggregator:
-    """
-    多源数据聚合器（100%兼容主管道调用逻辑）
-    兼容主管道调用：self.data_aggregator.fdb.get_matches()
-    """
-    def __init__(
-        self,
-        football_api_key: str = None,
-        football_data_key: str = None,
-        odds_api_key: str = None
-    ):
-        # 初始化各API实例，优先使用传入的密钥，兜底用环境变量
-        self.fdb = FootballDataAPI(api_key=football_data_key)  # 兼容主管道fdb属性调用
-        self.odds_api = OddsAPI(api_key=odds_api_key)
-        # 预留api-sports.io的football_api_key参数，兼容主管道传入
-        self.football_api_key = football_api_key if football_api_key else ENV_CONFIG["API_FOOTBALL_KEY"]
-        
+    """数据聚合器 - 合并多个API源"""
+    
+    def __init__(self, football_api_key: str = None, odds_api_key: str = None):
+        self.fdb = FootballDataAPI(football_api_key)
+        self.understat = UnderstatAPI()
+        self.odds = OddsAPI(odds_api_key)
+        self.sofascore = SofascoreAPI()
         logger.info("✅ 多源数据聚合器初始化完成，所有API实例已创建")
     
-    def get_matches(self, competition_code: str = "PL", **kwargs) -> List[Dict]:
-        """
-        兼容主管道快捷调用：data_aggregator.get_matches()
-        直接代理到FootballDataAPI的get_matches方法
-        """
-        return self.fdb.get_matches(competition_code=competition_code, **kwargs)
-    
-    def get_all_upcoming_matches(
-        self, 
-        competitions: List[str] = ["PL", "PD", "BL1", "SA", "FL1"]
-    ) -> List[Dict]:
-        """批量获取所有指定联赛的即将进行的比赛"""
-        all_matches = []
-        for comp in competitions:
-            matches = self.fdb.get_matches(competition_code=comp)
-            all_matches.extend(matches)
+    def get_comprehensive_match_data(self, match: Dict) -> Dict:
+        """获取单场比赛的综合数据【对齐原版，补全真实赔率获取和匹配】"""
+        # 统一字段名，和预测引擎、主管道完全对齐
+        home_team = match.get("homeTeam", {}).get("name", "")
+        away_team = match.get("awayTeam", {}).get("name", "")
+        match_date = match.get("utcDate", "")
+        competition_code = match.get("competition", {}).get("code", "")
         
-        logger.info(f"✅ 所有联赛共获取到 {len(all_matches)} 场有效比赛")
-        return all_matches
+        enhanced = {
+            "id": match.get("id", ""),
+            "home_team": home_team,
+            "away_team": away_team,
+            "date": match_date,
+            "competition_code": competition_code,
+            "basic": match,
+            "odds_win": None,
+            "odds_draw": None,
+            "odds_away": None,
+            "team_form": {
+                "home": {},
+                "away": {}
+            },
+            "xg_stats": {},
+            "head_to_head": []
+        }
+        
+        try:
+            # 【核心修复：对齐原版】获取赔率数据，并精准匹配到当前比赛
+            if self.odds.api_key:
+                # 联赛映射，适配the-odds-api的官方联赛代码
+                league_map = {
+                    "PL": "soccer_epl",
+                    "PD": "soccer_spain_la_liga",
+                    "BL1": "soccer_germany_bundesliga",
+                    "SA": "soccer_italy_serie_a",
+                    "FL1": "soccer_france_ligue_one"
+                }
+                sport_key = league_map.get(competition_code, "soccer_epl")
+                
+                # 获取对应联赛的赔率
+                odds_data = self.odds.get_upcoming_matches(sport=sport_key, regions="uk,eu")
+                for odds_match in odds_data:
+                    # 队名模糊匹配，适配不同API的队名差异
+                    odds_home = odds_match.get("home_team", "").lower()
+                    odds_away = odds_match.get("away_team", "").lower()
+                    match_home = home_team.lower()
+                    match_away = away_team.lower()
+                    
+                    # 模糊匹配，兼容不同API的队名格式
+                    if (match_home in odds_home or odds_home in match_home) and (match_away in odds_away or odds_away in match_away):
+                        # 提取胜平负赔率
+                        h2h_markets = odds_match.get("bookmakers", [{}])[0].get("markets", [{}])[0].get("outcomes", [])
+                        for outcome in h2h_markets:
+                            outcome_name = outcome.get("name", "").lower()
+                            if outcome_name == "home":
+                                enhanced["odds_win"] = outcome.get("price", None)
+                            elif outcome_name == "draw":
+                                enhanced["odds_draw"] = outcome.get("price", None)
+                            elif outcome_name == "away":
+                                enhanced["odds_away"] = outcome.get("price", None)
+                        logger.info(f"✅ 赔率匹配成功：{home_team} vs {away_team}，主胜赔率：{enhanced['odds_win']}")
+                        break
+            
+            # 获取球队数据（如果有ID）
+            if "homeTeam" in match and match["homeTeam"].get("id"):
+                team_form = self.sofascore.get_team_form(match["homeTeam"].get("id"))
+                enhanced["team_form"]["home"] = team_form
+            
+            if "awayTeam" in match and match["awayTeam"].get("id"):
+                team_form = self.sofascore.get_team_form(match["awayTeam"].get("id"))
+                enhanced["team_form"]["away"] = team_form
+        
+        except Exception as e:
+            logger.error(f"❌ 聚合比赛数据失败：{home_team} vs {away_team}，错误：{e}")
+        
+        return enhanced
+    
+    def get_league_data(self, competition_code: str = "PL") -> Dict:
+        """获取完整联赛数据"""
+        return {
+            "standings": self.fdb.get_team_standings(competition_code),
+            "matches": self.fdb.get_matches(competition_code),
+            "xg_stats": self.understat.get_team_xg_stats()
+        }
 
 
-# ==================== 核心导出函数（和主管道调用100%匹配）====================
-def create_data_aggregator(
-    football_api_key: str = None,
-    football_data_key: str = None,
-    odds_api_key: str = None
-) -> DataAggregator:
-    """
-    创建数据聚合器实例（彻底解决参数不匹配报错）
-    和主管道调用的参数名、数量完全对齐，无多余/缺失参数
-    :param football_api_key: api-sports.io 密钥（主管道传入）
-    :param football_data_key: football-data.org 密钥（主管道传入）
-    :param odds_api_key: the-odds-api.com 密钥（主管道传入）
-    :return: 初始化完成的DataAggregator实例
-    """
-    return DataAggregator(
-        football_api_key=football_api_key,
-        football_data_key=football_data_key,
-        odds_api_key=odds_api_key
-    )
+# ====================== 快速工厂函数 ======================
+def create_data_aggregator(football_api_key: str = None, odds_api_key: str = None) -> DataAggregator:
+    """创建数据聚合器实例（对齐原版接口）"""
+    return DataAggregator(football_api_key, odds_api_key)
 
-
-def validate_and_get_api_keys() -> Dict[str, str]:
-    """
-    密钥有效性验证函数（主管道必须导入的函数）
-    返回：所有有效密钥的字典
-    """
-    logger.info("=== 密钥有效性验证 ===")
+def validate_and_get_api_keys() -> Dict:
+    """验证并获取环境变量中的API密钥（对齐主管道）"""
+    api_keys = {
+        "FOOTBALL_DATA_KEY": os.getenv("FOOTBALL_DATA_KEY", "").strip(),
+        "API_FOOTBALL_KEY": os.getenv("API_FOOTBALL_KEY", "").strip(),
+        "ODDS_API_KEY": os.getenv("ODDS_API_KEY", "").strip()
+    }
+    
+    logger.info("=== 环境变量密钥读取状态 ===")
     valid_keys = {}
+    for key, value in api_keys.items():
+        if value:
+            logger.info(f"{key} 长度：{len(value)}")
+            valid_keys[key] = value
+        else:
+            logger.warning(f"{key} 未配置")
+    logger.info("=============================")
     
-    # 遍历所有密钥，验证非空
-    for key_name, key_value in ENV_CONFIG.items():
-        if "KEY" in key_name:
-            key_len = len(key_value.strip())
-            if key_len > 0:
-                logger.info(f"✅ {key_name} 验证通过，长度：{key_len}")
-                valid_keys[key_name] = key_value.strip()
-            else:
-                logger.error(f"❌ {key_name} 验证失败：密钥为空")
+    logger.info("=== 密钥有效性验证 ===")
+    final_valid_keys = {}
+    for key, value in valid_keys.items():
+        if len(value) >= 20:
+            logger.info(f"✅ {key} 验证通过，长度：{len(value)}")
+            final_valid_keys[key] = value
+        else:
+            logger.warning(f"⚠️ {key} 长度不足，无效")
+    logger.info(f"=== 密钥验证完成，共 {len(final_valid_keys)} 个有效密钥 ===")
     
-    logger.info(f"=== 密钥验证完成，共 {len(valid_keys)} 个有效密钥 ===")
-    return valid_keys
+    return final_valid_keys
+
+
+# ====================== Mock 模式自动切换（无API Key时使用）======================
+SAMPLE_MATCHES = [
+    {"id": 1001, "utcDate": "2026-03-14T15:00:00Z", "competition": {"code": "PL"}, "homeTeam": {"name": "Burnley FC"}, "awayTeam": {"name": "AFC Bournemouth"}, "status": "SCHEDULED"},
+    {"id": 1002, "utcDate": "2026-03-14T17:30:00Z", "competition": {"code": "PL"}, "homeTeam": {"name": "Arsenal FC"}, "awayTeam": {"name": "Everton FC"}, "status": "SCHEDULED"},
+    {"id": 1003, "utcDate": "2026-03-15T14:00:00Z", "competition": {"code": "SA"}, "homeTeam": {"name": "Juventus FC"}, "awayTeam": {"name": "FC Internazionale Milano"}, "status": "SCHEDULED"},
+    {"id": 1004, "utcDate": "2026-03-15T19:45:00Z", "competition": {"code": "BL1"}, "homeTeam": {"name": "FC Bayern München"}, "awayTeam": {"name": "Borussia Dortmund"}, "status": "SCHEDULED"},
+    {"id": 1005, "utcDate": "2026-03-16T20:00:00Z", "competition": {"code": "FL1"}, "homeTeam": {"name": "Paris Saint-Germain FC"}, "awayTeam": {"name": "Olympique de Marseille"}, "status": "SCHEDULED"},
+]
+
+def _get_mock_matches(competition_code):
+    """无 API Key 时返回模拟赛程"""
+    logger.info(f"🔄 无 API Key → 使用模拟数据")
+    filtered = [m for m in SAMPLE_MATCHES if m["competition"]["code"] == competition_code]
+    return filtered or SAMPLE_MATCHES
