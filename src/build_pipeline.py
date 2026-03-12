@@ -1,6 +1,6 @@
 """
-足球赛事预测主管道 - 核心问题终极修复版
-✅ 彻底解决「所有比赛特征完全一致」的致命问题，新增历史比赛数据采集
+足球赛事预测主管道 - 历史数据日期终极修复版
+✅ 彻底解决历史数据0场/所有比赛特征完全一致的致命问题
 ✅ 100%强制纯融合模型模式，无任何兜底逻辑
 ✅ 双阈值规则：<50%置信度直接跳过，≥80%才生成AI分析
 ✅ 严格API限流合规，适配免费版10次/分钟限制
@@ -94,10 +94,9 @@ def save_cache(cache_data: Dict):
     except Exception as e:
         logger.warning(f"⚠️ 缓存保存失败：{str(e)}")
 
-def get_cache_key(comp_code: str, status: str, days: int) -> str:
-    """生成缓存唯一key"""
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    return f"{comp_code}_{status}_{days}_{today_str}"
+def get_cache_key(comp_code: str, status: str, date_from: str, date_to: str) -> str:
+    """生成缓存唯一key，基于日期范围，彻底避免缓存错乱"""
+    return f"{comp_code}_{status}_{date_from}_{date_to}"
 
 # ===================== 完整中英队名字典 =====================
 TEAM_CN_MAPPING = {
@@ -246,16 +245,22 @@ def init_database() -> sqlite3.Connection:
     logger.info(f"Database initialized at {DB_PATH}")
     return conn
 
-# ===================== 【核心修复】历史比赛数据采集函数 =====================
+# ===================== 【核心修复】历史比赛数据采集函数，日期范围100%正确 =====================
 def fetch_historical_matches(aggregator, competitions: List[str], history_days: int) -> List[Dict]:
-    """采集已结束的历史比赛数据，给特征工程提供真实数据来源"""
+    """采集已结束的历史比赛数据，给特征工程提供真实数据来源，日期范围：过去history_days天 → 今天"""
     logger.info(f"📊 开始采集历史比赛数据，过去{history_days}天已完赛赛事")
     historical_matches = []
     cache_data = load_cache()
 
+    # 【核心修复】正确计算历史日期范围
+    today_utc = datetime.now(timezone.utc)
+    date_to = today_utc.strftime("%Y-%m-%d")  # 结束日期：今天
+    date_from = (today_utc - timedelta(days=history_days)).strftime("%Y-%m-%d")  # 开始日期：过去30天
+    logger.info(f"📅 历史数据采集日期范围：{date_from} 至 {date_to}")
+
     for comp_code in competitions:
         logger.info(f"  正在获取 {comp_code} 历史完赛数据...")
-        cache_key = get_cache_key(comp_code, "FINISHED", history_days)
+        cache_key = get_cache_key(comp_code, "FINISHED", date_from, date_to)
         
         # 优先使用缓存
         if cache_key in cache_data:
@@ -264,14 +269,15 @@ def fetch_historical_matches(aggregator, competitions: List[str], history_days: 
             logger.info(f"  ✅ {comp_code} 历史数据命中缓存，共{len(cached_matches)}场完赛记录")
             continue
         
-        # 无缓存发起API请求
+        # 无缓存发起API请求，【核心修复】明确传递dateFrom和dateTo，不使用days参数
         matches = []
         for retry in range(API_MAX_RETRY + 1):
             try:
                 matches = aggregator.fdb.get_matches(
                     competition_code=comp_code,
                     status="FINISHED",
-                    days=history_days
+                    dateFrom=date_from,
+                    dateTo=date_to
                 )
                 break
             except Exception as e:
@@ -289,7 +295,8 @@ def fetch_historical_matches(aggregator, competitions: List[str], history_days: 
                 "cache_time": datetime.now(timezone.utc).isoformat(),
                 "comp_code": comp_code,
                 "status": "FINISHED",
-                "days": history_days,
+                "date_from": date_from,
+                "date_to": date_to,
                 "matches": matches
             }
             save_cache(cache_data)
@@ -302,6 +309,71 @@ def fetch_historical_matches(aggregator, competitions: List[str], history_days: 
     
     logger.info(f"✅ 历史数据采集完成，共获取{len(historical_matches)}场有效完赛记录")
     return historical_matches
+
+# ===================== 【核心修复】未来赛程采集函数，日期范围正确 =====================
+def fetch_future_matches(aggregator, competitions: List[str], predict_days: int) -> List[Dict]:
+    """采集未来赛程数据，日期范围：今天 → 未来predict_days天"""
+    logger.info(f"📊 开始采集未来赛事赛程，未来{predict_days}天赛事")
+    future_matches = []
+    cache_data = load_cache()
+
+    # 正确计算未来日期范围
+    today_utc = datetime.now(timezone.utc)
+    date_from = today_utc.strftime("%Y-%m-%d")  # 开始日期：今天
+    date_to = (today_utc + timedelta(days=predict_days)).strftime("%Y-%m-%d")  # 结束日期：未来3天
+    logger.info(f"📅 未来赛程采集日期范围：{date_from} 至 {date_to}")
+
+    for comp_code in competitions:
+        logger.info(f"  正在获取 {comp_code} 未来赛事赛程...")
+        cache_key = get_cache_key(comp_code, "SCHEDULED", date_from, date_to)
+        
+        # 优先使用缓存
+        if cache_key in cache_data:
+            cached_matches = cache_data[cache_key]["matches"]
+            future_matches.extend(cached_matches)
+            logger.info(f"  ✅ {comp_code} 赛程命中缓存，共{len(cached_matches)}场比赛，无API调用")
+            continue
+        
+        # 无缓存发起API请求，明确传递dateFrom和dateTo，避免days参数歧义
+        matches = []
+        for retry in range(API_MAX_RETRY + 1):
+            try:
+                matches = aggregator.fdb.get_matches(
+                    competition_code=comp_code,
+                    status="SCHEDULED",
+                    dateFrom=date_from,
+                    dateTo=date_to
+                )
+                break
+            except Exception as e:
+                if retry < API_MAX_RETRY:
+                    logger.warning(f"  ⚠️ {comp_code} 赛程请求失败，{API_RETRY_DELAY}秒后重试")
+                    time.sleep(API_RETRY_DELAY)
+                else:
+                    logger.error(f"  ❌ {comp_code} 赛程请求失败，已达最大重试次数，跳过")
+                    raise e
+        
+        # API失败直接跳过，不保存任何无效数据
+        if len(matches) > 0:
+            future_matches.extend(matches)
+            cache_data[cache_key] = {
+                "cache_time": datetime.now(timezone.utc).isoformat(),
+                "comp_code": comp_code,
+                "status": "SCHEDULED",
+                "date_from": date_from,
+                "date_to": date_to,
+                "matches": matches
+            }
+            save_cache(cache_data)
+            logger.info(f"  ✅ {comp_code} 赛事成功获取 {len(matches)} 场比赛，已缓存")
+        else:
+            logger.warning(f"  ⚠️ {comp_code} 赛事未获取到有效比赛，已跳过")
+        
+        # 严格遵守API限流间隔
+        time.sleep(API_REQUEST_INTERVAL)
+    
+    logger.info(f"✅ 赛程采集完成，共获取 {len(future_matches)} 场有效未来比赛，无无效数据")
+    return future_matches
 
 # ===================== 【核心强制预测函数】=====================
 def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = None) -> pd.DataFrame:
@@ -743,7 +815,7 @@ def main():
     historical_matches = []
     
     logger.info("="*66)
-    logger.info("🚀 STARTING FULL FOOTBALL PREDICTION PIPELINE - 核心修复版")
+    logger.info("🚀 STARTING FULL FOOTBALL PREDICTION PIPELINE - 历史数据终极修复版")
     logger.info("="*66)
     
     try:
@@ -759,62 +831,17 @@ def main():
         collector = FootballDataCollector(DB_PATH)
         conn = init_database()
         init_prediction_model()
-        cache_data = load_cache()
         logger.info("✅ 管道初始化成功，所有API密钥、模型配置正常，强制纯模型模式已开启")
 
-        # 【核心修复1】采集历史完赛数据，给特征工程提供真实数据来源
+        # 【核心修复1】采集历史完赛数据，日期范围100%正确
         historical_matches = fetch_historical_matches(aggregator, COMPETITIONS, HISTORY_DAYS)
 
-        # 【核心修复2】采集未来赛程数据，移除无效联赛/无效数据兜底
-        logger.info("📊 阶段2：未来赛事赛程采集 (API & 缓存)")
-        future_matches = []
-        for comp_code in COMPETITIONS:
-            logger.info(f"  正在获取 {comp_code} 未来赛事赛程...")
-            cache_key = get_cache_key(comp_code, "SCHEDULED", PREDICT_DAYS)
-            
-            # 优先使用缓存
-            if cache_key in cache_data:
-                cached_matches = cache_data[cache_key]["matches"]
-                future_matches.extend(cached_matches)
-                logger.info(f"  ✅ {comp_code} 赛程命中缓存，共{len(cached_matches)}场比赛，无API调用")
-                continue
-            
-            # 无缓存发起API请求，带重试
-            matches = []
-            for retry in range(API_MAX_RETRY + 1):
-                try:
-                    matches = aggregator.fdb.get_matches(
-                        competition_code=comp_code,
-                        status="SCHEDULED",
-                        days=PREDICT_DAYS
-                    )
-                    break
-                except Exception as e:
-                    if retry < API_MAX_RETRY:
-                        logger.warning(f"  ⚠️ {comp_code} 赛程请求失败，{API_RETRY_DELAY}秒后重试")
-                        time.sleep(API_RETRY_DELAY)
-                    else:
-                        logger.error(f"  ❌ {comp_code} 赛程请求失败，已达最大重试次数，跳过")
-                        raise e
-            
-            # 【核心修复】API失败直接跳过，不保存任何无效数据
-            if len(matches) > 0:
-                collector.save_matches(matches, comp_code)
-                future_matches.extend(matches)
-                cache_data[cache_key] = {
-                    "cache_time": datetime.now(timezone.utc).isoformat(),
-                    "comp_code": comp_code,
-                    "status": "SCHEDULED",
-                    "days": PREDICT_DAYS,
-                    "matches": matches
-                }
-                save_cache(cache_data)
-                logger.info(f"  ✅ {comp_code} 赛事成功获取 {len(matches)} 场比赛，已缓存")
-            else:
-                logger.warning(f"  ⚠️ {comp_code} 赛事未获取到有效比赛，已跳过")
-            
-            # 严格遵守API限流间隔
-            time.sleep(API_REQUEST_INTERVAL)
+        # 【强制校验】历史数据为空直接终止，不允许用默认值
+        if len(historical_matches) == 0:
+            raise Exception("未获取到任何有效历史完赛数据，无法构建有效特征，管道终止。请检查API配额、日期范围是否正确")
+
+        # 【核心修复2】采集未来赛程数据，日期范围正确
+        future_matches = fetch_future_matches(aggregator, COMPETITIONS, PREDICT_DAYS)
         
         matches_count = len(future_matches)
         if matches_count == 0:
