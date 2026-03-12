@@ -1,10 +1,20 @@
 """
-足球赛事预测主管道 - 方案3完整最终版
+足球赛事预测主管道 - 导入顺序修复完整版
+✅ 彻底解决NameError: name 'os' is not defined报错
 ✅ 100%强制纯融合模型模式，无任何兜底逻辑
 ✅ 双阈值规则：<50%置信度直接跳过，≥80%才生成AI分析
 ✅ 扩展赛事：五大联赛+主流一级联赛+重要杯赛
 ✅ API防浪费：仅高置信度调用，余额不足自动禁用
 """
+# ===================== 【最开头导入所有基础库，彻底解决导入顺序报错】=====================
+import os
+import logging
+import sqlite3
+import json
+from datetime import datetime, timezone
+from typing import List, Dict
+import pandas as pd
+
 # ===================== 【配置开关 - 所有规则可在这里直接调整】=====================
 # 强制纯融合模型模式：True=模型异常直接终止，无任何兜底
 FORCE_USE_FUSION_MODEL = True
@@ -46,15 +56,6 @@ OUTPUT_DIR = "./public"
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-
-# ===================== 【最开头导入所有基础库，彻底解决导入顺序报错】=====================
-import os
-import logging
-import sqlite3
-import json
-from datetime import datetime, timezone
-from typing import List, Dict
-import pandas as pd
 
 # ===================== 【日志初始化】=====================
 logging.basicConfig(
