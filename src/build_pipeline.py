@@ -1,11 +1,52 @@
 """
-足球赛事预测主管道 - 全bug修复最终版
-✅ 彻底修复全平局/全主胜极端预测异常
-✅ 修复重复DeepSeek警告、历史数据格式警告
-✅ 100%优先你的超级融合模型SuperFusionModel
-✅ 完整保留中文队名、静态页面生成全功能
-✅ 增加模型返回值日志，方便定位问题
+足球赛事预测主管道 - 方案3完整最终版
+✅ 100%强制纯融合模型模式，无任何兜底逻辑
+✅ 双阈值规则：<50%置信度直接跳过，≥80%才生成AI分析
+✅ 扩展赛事：五大联赛+主流一级联赛+重要杯赛
+✅ API防浪费：仅高置信度调用，余额不足自动禁用
 """
+# ===================== 【配置开关 - 所有规则可在这里直接调整】=====================
+# 强制纯融合模型模式：True=模型异常直接终止，无任何兜底
+FORCE_USE_FUSION_MODEL = True
+# 预测未来天数
+PREDICT_DAYS = 7
+# 【核心阈值配置】
+SKIP_CONFIDENCE_THRESHOLD = 0.5  # 低于此置信度的比赛，直接跳过、不展示
+AI_ANALYSIS_CONFIDENCE_THRESHOLD = 0.8  # 高于等于此置信度，才生成AI分析
+# 【赛事范围配置】五大联赛+主流一级联赛+重要杯赛（全部适配football-data.org官方代码）
+COMPETITIONS = [
+    # 原五大联赛
+    'PL',   # 英超
+    'PD',   # 西甲
+    'BL1',  # 德甲
+    'SA',   # 意甲
+    'FL1',  # 法甲
+    # 新增主流一级联赛
+    'DED',  # 荷甲
+    'PPL',  # 葡超
+    'TSL',  # 土超
+    'BEL',  # 比甲
+    'SPL',  # 苏超
+    'AUT',  # 奥超
+    # 新增重要杯赛
+    'CL',   # 欧冠
+    'EL',   # 欧联杯
+    'ECL',  # 欧协联
+    'FAC',  # 英格兰足总杯
+    'DFB',  # 德国杯
+    'CI',   # 意大利杯
+    'CDR',  # 西班牙国王杯
+    'COF',  # 法国杯
+]
+# 数据库路径
+DB_PATH = "data/football.db"
+# 静态页面输出目录
+OUTPUT_DIR = "./public"
+# DeepSeek/豆包API配置（自动从环境变量/Secrets读取）
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+
 # ===================== 【最开头导入所有基础库，彻底解决导入顺序报错】=====================
 import os
 import logging
@@ -15,22 +56,6 @@ from datetime import datetime, timezone
 from typing import List, Dict
 import pandas as pd
 
-# ===================== 【配置开关】=====================
-# 强制只用你的超级融合模型：True=模型失败直接终止管道，False=模型失败自动用保底逻辑
-FORCE_USE_FUSION_MODEL = False
-# 预测未来天数
-PREDICT_DAYS = 7
-# 目标联赛列表
-COMPETITIONS = ['PL', 'PD', 'BL1', 'SA', 'FL1']
-# 数据库路径
-DB_PATH = "data/football.db"
-# 静态页面输出目录
-OUTPUT_DIR = "./public"
-# DeepSeek API配置（自动从环境变量/Secrets读取）
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-
 # ===================== 【日志初始化】=====================
 logging.basicConfig(
     level=logging.INFO,
@@ -38,7 +63,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ===================== 五大联赛完整中英队名字典 =====================
+# ===================== 完整中英队名字典（扩展联赛+杯赛适配）=====================
 TEAM_CN_MAPPING = {
     # 英超 PL
     "Arsenal FC": "阿森纳",
@@ -159,44 +184,122 @@ TEAM_CN_MAPPING = {
     "Paris FC": "巴黎FC",
     "Stade Etivallière": "圣埃蒂安",
     "Girondins de Bordeaux": "波尔多",
+    # 荷甲 DED
+    "AFC Ajax": "阿贾克斯",
+    "PSV Eindhoven": "埃因霍温",
+    "Feyenoord Rotterdam": "费耶诺德",
+    "AZ Alkmaar": "阿尔克马尔",
+    "FC Twente": "特温特",
+    "FC Utrecht": "乌德勒支",
+    "Vitesse Arnhem": "维特斯",
+    "SC Heerenveen": "海伦芬",
+    "NEC Nijmegen": "奈梅亨",
+    "RKC Waalwijk": "瓦尔韦克",
+    "Sparta Rotterdam": "鹿特丹斯巴达",
+    "Fortuna Sittard": "锡塔德幸运",
+    "Excelsior Rotterdam": "鹿特丹精英",
+    "Heracles Almelo": "赫拉克勒斯",
+    "Go Ahead Eagles": "前进之鹰",
+    "FC Volendam": "福伦丹",
+    "FC Groningen": "格罗宁根",
+    "PEC Zwolle": "兹沃勒",
+    # 葡超 PPL
+    "SL Benfica": "本菲卡",
+    "FC Porto": "波尔图",
+    "Sporting CP": "葡萄牙体育",
+    "SC Braga": "布拉加",
+    "Vitória SC": "吉马良斯",
+    "Boavista FC": "博阿维斯塔",
+    "FC Famalicão": "法马利康",
+    "Gil Vicente FC": "吉尔维森特",
+    "Casa Pia AC": "卡萨皮亚",
+    "Portimonense SC": "波尔蒂芒人",
+    "Estoril Praia": "埃斯托里尔",
+    "Rio Ave FC": "阿维河",
+    "Moreirense FC": "莫雷伦斯",
+    "FC Arouca": "阿罗卡",
+    "CD Santa Clara": "圣克拉拉",
+    "CF Estrela da Amadora": "阿马多拉之星",
+    # 欧冠 CL
+    "Real Madrid CF": "皇家马德里",
+    "FC Barcelona": "巴塞罗那",
+    "Manchester City FC": "曼城",
+    "Bayern München": "拜仁慕尼黑",
+    "Arsenal FC": "阿森纳",
+    "Liverpool FC": "利物浦",
+    "Paris Saint-Germain FC": "巴黎圣日耳曼",
+    "Borussia Dortmund": "多特蒙德",
+    "Juventus FC": "尤文图斯",
+    "Inter Milan": "国际米兰",
+    "AC Milan": "AC米兰",
+    "Atlético Madrid": "马德里竞技",
+    "RB Leipzig": "莱比锡红牛",
+    "Bayer Leverkusen": "勒沃库森",
+    "Benfica": "本菲卡",
+    "Porto": "波尔图",
+    "PSV Eindhoven": "埃因霍温",
+    "Feyenoord": "费耶诺德",
+    "Celtic FC": "凯尔特人",
+    "Rangers FC": "流浪者",
+    # 欧联杯 EL
+    "AS Roma": "罗马",
+    "SS Lazio": "拉齐奥",
+    "Atalanta BC": "亚特兰大",
+    "Olympique de Marseille": "马赛",
+    "Lille OSC": "里尔",
+    "Olympique Lyonnais": "里昂",
+    "Brighton & Hove Albion FC": "布莱顿",
+    "West Ham United FC": "西汉姆联",
+    "Manchester United FC": "曼联",
+    "Sevilla FC": "塞维利亚",
+    "Villarreal CF": "比利亚雷亚尔",
+    "Real Sociedad de Fútbol": "皇家社会",
+    "SC Freiburg": "弗赖堡",
+    "Eintracht Frankfurt": "法兰克福",
+    "Sporting CP": "葡萄牙体育",
+    "SC Braga": "布拉加",
+    "Ajax": "阿贾克斯",
+    "AZ Alkmaar": "阿尔克马尔",
 }
 
-# ===================== DeepSeek API核心功能（修复重复警告）=====================
+# ===================== API功能（防浪费优化版）=====================
 deepseek_client = None
 DEEPSEEK_AVAILABLE = False
-DEEPSEEK_INIT_CHECKED = False  # 新增：标记是否已经检查过初始化，避免重复打印警告
+DEEPSEEK_INIT_CHECKED = False
+DEEPSEEK_DISABLED = False  # 全局禁用标记，失败一次永久禁用
 
 def init_deepseek():
-    """延迟初始化DeepSeek客户端，修复重复警告问题"""
-    global deepseek_client, DEEPSEEK_AVAILABLE, DEEPSEEK_INIT_CHECKED
-    # 已经检查过，直接返回结果，不再重复打印
+    """延迟初始化API客户端，余额不足/失败自动永久禁用"""
+    global deepseek_client, DEEPSEEK_AVAILABLE, DEEPSEEK_INIT_CHECKED, DEEPSEEK_DISABLED
+    if DEEPSEEK_DISABLED:
+        return False
     if DEEPSEEK_INIT_CHECKED:
         return DEEPSEEK_AVAILABLE
     DEEPSEEK_INIT_CHECKED = True
 
-    # 无密钥直接禁用，只打印一次警告
-    if not DEEPSEEK_API_KEY or DEEPSEEK_API_KEY.strip() == "":
-        logger.warning("⚠️ 未配置DEEPSEEK_API_KEY，禁用DeepSeek AI功能，使用本地中英队名字典")
+    if not DEEPSEEK_API_KEY:
+        logger.warning("⚠️ 未配置API密钥，禁用AI分析功能")
         DEEPSEEK_AVAILABLE = False
         return False
     
-    # 延迟导入openai
     try:
         import openai
         deepseek_client = openai.OpenAI(
-            api_key=DEEPSEEK_API_KEY.strip(),
+            api_key=DEEPSEEK_API_KEY,
             base_url=DEEPSEEK_BASE_URL
         )
         DEEPSEEK_AVAILABLE = True
-        logger.info("✅ DeepSeek API初始化成功，已启用AI翻译+赛事分析功能")
+        logger.info("✅ API初始化成功，仅高置信度比赛启用AI分析")
         return True
     except ImportError:
-        logger.warning("⚠️ 环境未安装openai库，DeepSeek功能已禁用，请在requirements.txt添加openai>=1.0.0")
+        logger.warning("⚠️ 环境未安装openai库，AI功能已禁用")
         DEEPSEEK_AVAILABLE = False
+        DEEPSEEK_DISABLED = True
         return False
     except Exception as e:
-        logger.warning(f"⚠️ DeepSeek API初始化失败，已禁用：{str(e)}")
+        logger.warning(f"⚠️ API初始化失败，已禁用：{str(e)}")
         DEEPSEEK_AVAILABLE = False
+        DEEPSEEK_DISABLED = True
         return False
 
 
@@ -205,14 +308,12 @@ def get_team_cn_name(en_name: str) -> str:
     if not en_name or not isinstance(en_name, str):
         return "未知球队"
     
-    # 优先本地字典匹配
     if en_name in TEAM_CN_MAPPING:
         return TEAM_CN_MAPPING[en_name]
     short_name = en_name.replace(" FC", "").replace(" CF", "").replace(" AS", "").replace(" AC", "").strip()
     if short_name in TEAM_CN_MAPPING:
         return TEAM_CN_MAPPING[short_name]
     
-    # DeepSeek兜底翻译
     if init_deepseek() and deepseek_client:
         try:
             prompt = f"把这个足球俱乐部的英文名翻译成国内竞彩常用的中文标准译名，只输出中文译名，不要任何其他内容：{en_name}"
@@ -234,9 +335,10 @@ def get_team_cn_name(en_name: str) -> str:
 
 
 def generate_match_analysis(match_info: Dict) -> str:
-    """生成单场比赛AI分析"""
+    """生成单场比赛AI分析，失败自动全局禁用"""
+    global DEEPSEEK_DISABLED, DEEPSEEK_AVAILABLE
     if not init_deepseek() or not deepseek_client:
-        return "AI分析功能未启用，可参考概率数据进行决策"
+        return "本场比赛无AI分析，可参考概率数据进行决策"
     
     try:
         prompt = f"""
@@ -246,7 +348,7 @@ def generate_match_analysis(match_info: Dict) -> str:
         预测：{match_info['prediction']}
         概率：主胜{round(match_info['home_win_prob']*100,1)}%，平局{round(match_info['draw_prob']*100,1)}%，客胜{round(match_info['away_win_prob']*100,1)}%
         基本面：主队近5场胜{match_info['h_recent_wins']}场，客队近5场胜{match_info['a_recent_wins']}场，历史交锋主队胜率{round(match_info['h2h_home_win_rate']*100,1)}%
-        置信度：{round(match_info['model_confidence']*100,1)}%
+        模型置信度：{round(match_info['model_confidence']*100,1)}%
         """
         response = deepseek_client.chat.completions.create(
             model=DEEPSEEK_MODEL,
@@ -257,41 +359,41 @@ def generate_match_analysis(match_info: Dict) -> str:
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        logger.warning(f"⚠️ {match_info['home_team_cn']}vs{match_info['away_team_cn']}分析生成失败：{str(e)}")
-        return "AI分析生成失败，可参考概率数据进行决策"
+        # 检测到余额不足/调用失败，永久全局禁用，避免浪费额度
+        if "402" in str(e) or "Insufficient Balance" in str(e) or "余额不足" in str(e):
+            logger.critical("❌ 检测到API账户余额不足，本次运行永久禁用AI分析功能")
+            DEEPSEEK_DISABLED = True
+            DEEPSEEK_AVAILABLE = False
+        else:
+            logger.warning(f"⚠️ 赛事分析生成失败：{str(e)}")
+        return "本场比赛无AI分析，可参考概率数据进行决策"
 
 # ===================== 项目基础模块导入 =====================
 from src.data.api_integrations import create_data_aggregator, validate_and_get_api_keys
 from src.data.feature_engineering import build_features_dataset
 from src.data.data_collector_enhanced import FootballDataCollector
 
-# ===================== 超级融合模型初始化 =====================
+# ===================== 【强制加载】超级融合模型，失败直接终止管道 =====================
 MODEL_AVAILABLE = False
 _fusion_model = None
 
-# 加载你的超级融合模型
+# 强制加载模型，失败直接退出
 try:
     from src.engine.fusion_engine import SuperFusionModel
     MODEL_AVAILABLE = True
     logger.info("✅ 你的超级融合预测模型SuperFusionModel加载成功")
 except Exception as e:
-    if FORCE_USE_FUSION_MODEL:
-        logger.critical(f"❌ 强制模式开启，模型加载失败，管道终止！原因：{str(e)}", exc_info=True)
-        exit(1)
-    else:
-        logger.warning(f"⚠️ 你的超级融合模型加载失败，将使用保底逻辑：{str(e)}")
-        MODEL_AVAILABLE = False
+    logger.critical(f"❌ 强制模式开启！超级融合模型加载失败，管道直接终止！失败原因：{str(e)}", exc_info=True)
+    exit(1)
 
 
 def init_prediction_model():
-    """初始化超级融合模型，单例模式"""
+    """强制初始化超级融合模型，失败直接终止管道"""
     global _fusion_model
-    if not MODEL_AVAILABLE:
-        return None
     if _fusion_model is None:
         try:
             _fusion_model = SuperFusionModel()
-            # 【在这里调整模型融合权重，修改胜率分布】
+            # 【在这里调整模型融合权重】
             # _fusion_model.weights = {
             #     "xgboost": 0.35,
             #     "dnn": 0.25,
@@ -300,14 +402,10 @@ def init_prediction_model():
             #     "xg": 0.10,
             #     "home_advantage": 0.05
             # }
-            logger.info("✅ 你的超级融合模型初始化完成，将作为核心预测引擎")
+            logger.info("✅ 你的超级融合模型初始化完成，强制纯模型模式已开启")
         except Exception as e:
-            if FORCE_USE_FUSION_MODEL:
-                logger.critical(f"❌ 强制模式开启，模型初始化失败，管道终止！原因：{str(e)}", exc_info=True)
-                exit(1)
-            else:
-                logger.error(f"❌ 模型初始化失败：{str(e)}", exc_info=True)
-                _fusion_model = None
+            logger.critical(f"❌ 强制模式开启！超级融合模型初始化失败，管道直接终止！失败原因：{str(e)}", exc_info=True)
+            exit(1)
     return _fusion_model
 
 
@@ -320,19 +418,17 @@ def init_database() -> sqlite3.Connection:
 
 
 def load_historical_data() -> List[Dict]:
-    """加载历史数据，彻底修复格式警告"""
+    """加载历史数据，修复格式警告"""
     try:
         picks_path = "site/data/picks.json"
         os.makedirs(os.path.dirname(picks_path), exist_ok=True)
         
-        # 文件不存在，自动创建空数组
         if not os.path.exists(picks_path):
             with open(picks_path, "w", encoding="utf-8") as f:
                 json.dump([], f)
             logger.info("✅ 自动创建空历史数据文件picks.json")
             return []
         
-        # 读取并校验格式
         with open(picks_path, "r", encoding="utf-8") as f:
             content = f.read().strip()
             if not content:
@@ -351,18 +447,18 @@ def load_historical_data() -> List[Dict]:
         logger.error(f"加载历史数据出错：{str(e)}", exc_info=False)
         return []
 
-# ===================== 【核心修复】预测函数，彻底解决全平局/全主胜异常 =====================
+# ===================== 【核心强制预测函数】100%纯模型+双阈值过滤 =====================
 def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = None) -> pd.DataFrame:
     """
-    核心预测函数，彻底修复极端预测异常
-    1. 优先使用你的超级融合模型
-    2. 强制校验概率合法性，自动归一化
-    3. 增加详细日志，定位模型返回值问题
-    4. 兜底逻辑确保预测分布合理
+    强制纯模型预测+双阈值过滤
+    1. 100%使用你的超级融合模型，无任何兜底逻辑
+    2. 置信度<50%：直接跳过比赛，不展示
+    3. 置信度≥80%：生成AI分析，调用API
+    4. 50%≤置信度<80%：保留预测，不生成AI分析
     """
     if features_df.empty:
-        logger.warning("特征数据集为空，跳过模型预测")
-        return pd.DataFrame()
+        logger.critical("❌ 强制模式开启！特征数据集为空，管道终止")
+        exit(1)
     
     try:
         logger.info(f"开始模型预测，输入特征形状：{features_df.shape}")
@@ -370,152 +466,140 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
         model = init_prediction_model()
         predictions_list = []
         total_matches = len(prediction_df)
+        all_probs = []
 
-        # 【第一优先级】使用你的超级融合模型
-        if model is not None and raw_matches is not None:
-            logger.info(f"🤖 【核心引擎】使用你的超级融合模型进行预测，共{total_matches}场比赛")
-            success_count = 0
-            fail_count = 0
+        logger.info(f"🤖 【强制纯模型模式】使用你的超级融合模型进行预测，共{total_matches}场比赛")
+        success_count = 0
 
-            for idx, row in prediction_df.iterrows():
-                try:
-                    match_id = row["match_id"]
-                    match_name = f"{row['home_team']} vs {row['away_team']}"
-                    raw_match = next((m for m in raw_matches if m.get("id") == match_id), None)
-                    if raw_match is None:
-                        fail_count += 1
-                        continue
-
-                    # 调用你的原生模型预测
-                    match_features = row.to_dict()
-                    fusion_result = model.predict_single_match(raw_match, match_features)
-                    final_pred = fusion_result.get("final_prediction", fusion_result)
-
-                    # ===================== 【核心修复】概率提取与校验 =====================
-                    # 兼容所有常见字段名，彻底解决字段不匹配问题
-                    home_win_prob = float(final_pred.get("home_win_prob", 
-                        final_pred.get("win_prob", 
-                        final_pred.get("home_prob", 0.4))))
-                    draw_prob = float(final_pred.get("draw_prob", 
-                        final_pred.get("tie_prob", 0.3)))
-                    away_win_prob = float(final_pred.get("away_win_prob", 
-                        final_pred.get("loss_prob", 
-                        final_pred.get("away_prob", 0.3))))
-
-                    # 【关键修复】打印模型返回的原始概率，方便你定位问题
-                    logger.info(f"📊 比赛{match_name}模型返回概率：主胜={home_win_prob}, 平局={draw_prob}, 客胜={away_win_prob}")
-
-                    # 【强制校验】概率必须在0-1之间，避免百分比数值溢出
-                    if home_win_prob > 1 or draw_prob > 1 or away_win_prob > 1:
-                        logger.warning(f"⚠️ 比赛{match_name}概率为百分比数值，已自动转换为小数")
-                        home_win_prob = home_win_prob / 100
-                        draw_prob = draw_prob / 100
-                        away_win_prob = away_win_prob / 100
-
-                    # 【强制归一化】确保三个概率加起来等于1，避免数值异常
-                    total_prob = home_win_prob + draw_prob + away_win_prob
-                    if total_prob <= 0 or abs(total_prob - 1) > 0.1:
-                        logger.warning(f"⚠️ 比赛{match_name}概率总和异常，已自动归一化")
-                        home_win_prob = max(min(home_win_prob, 0.9), 0.1)
-                        draw_prob = max(min(draw_prob, 0.9), 0.1)
-                        away_win_prob = max(min(away_win_prob, 0.9), 0.1)
-                        total_prob = home_win_prob + draw_prob + away_win_prob
-                    
-                    # 最终归一化
-                    home_win_prob = round(home_win_prob / total_prob, 4)
-                    draw_prob = round(draw_prob / total_prob, 4)
-                    away_win_prob = round(away_win_prob / total_prob, 4)
-
-                    # 【修复全平局核心逻辑】基于归一化后的概率，严格判断最大值
-                    prob_dict = {
-                        "主胜": home_win_prob,
-                        "平局": draw_prob,
-                        "客胜": away_win_prob
-                    }
-                    prediction = max(prob_dict, key=prob_dict.get)
-
-                    # 处理置信度
-                    model_confidence = float(final_pred.get("confidence", 
-                        final_pred.get("model_confidence", 0.6)))
-                    if model_confidence > 1:
-                        model_confidence = model_confidence / 100
-                    model_confidence = round(max(min(model_confidence, 0.99), 0.1), 4)
-
-                    # 保存预测结果
-                    predictions_list.append({
-                        "match_id": match_id,
-                        "home_win_prob": home_win_prob,
-                        "draw_prob": draw_prob,
-                        "away_win_prob": away_win_prob,
-                        "prediction": prediction,
-                        "expected_value": round(float(final_pred.get("expected_value", 
-                            final_pred.get("ev", 0))), 4),
-                        "kelly_suggestion": round(float(final_pred.get("kelly_suggestion", 0)), 4),
-                        "model_confidence": model_confidence,
-                        "model_source": "你的超级融合模型SuperFusionModel"
-                    })
-                    success_count += 1
-                
-                except Exception as e:
-                    fail_count += 1
-                    if FORCE_USE_FUSION_MODEL:
-                        logger.critical(f"❌ 强制模式开启，比赛{match_name}预测失败，管道终止！原因：{str(e)}", exc_info=True)
-                        raise e
-                    else:
-                        logger.warning(f"⚠️ 比赛{match_name}预测失败，将用保底逻辑补全：{str(e)}")
-                        continue
-
-            logger.info(f"✅ 你的超级融合模型预测完成：成功{success_count}场，失败{fail_count}场，共{total_matches}场")
-
-        # 【保底逻辑】仅当模型不可用/预测失败时执行
-        logger.info("开始补全预测数据，确保所有场次都有有效结果")
-        if len(predictions_list) > 0:
-            pred_result_df = pd.DataFrame(predictions_list)
-            prediction_df = prediction_df.merge(pred_result_df, on="match_id", how="left")
-        else:
-            for col in ["home_win_prob", "draw_prob", "away_win_prob", "prediction", "expected_value", "kelly_suggestion", "model_confidence", "model_source"]:
-                prediction_df[col] = 0.0
-                prediction_df["prediction"] = "主胜"
-                prediction_df["model_source"] = "保底逻辑"
-
-        # 补全所有缺失的预测数据
         for idx, row in prediction_df.iterrows():
-            if pd.isna(row["home_win_prob"]) or row["home_win_prob"] == 0:
-                match_name = f"{row['home_team']} vs {row['away_team']}"
-                # 基于特征的保底预测逻辑
-                home_win_prob = 0.42 + \
-                    (row["home_win_rate"] * 0.18) - \
-                    (row["away_win_rate"] * 0.12) + \
-                    (row["h2h_home_win_rate"] * 0.08) + \
-                    (row["rel_attack_strength"] * 0.05) - \
-                    (row["rel_defense_strength"] * 0.03)
-                
-                # 限制概率范围，避免极端值
-                home_win_prob = max(min(home_win_prob, 0.85), 0.15)
-                draw_prob = 0.28
-                away_win_prob = max(min(1 - home_win_prob - draw_prob, 0.85), 0.15)
-                draw_prob = 1 - home_win_prob - away_win_prob
+            match_id = row["match_id"]
+            match_name = f"{row['home_team']} vs {row['away_team']}"
+            raw_match = next((m for m in raw_matches if m.get("id") == match_id), None)
+            
+            if raw_match is None:
+                logger.critical(f"❌ 强制模式开启！比赛{match_name}原始数据不存在，管道终止")
+                exit(1)
 
-                # 归一化
-                total_prob = home_win_prob + draw_prob + away_win_prob
-                home_win_prob = round(home_win_prob / total_prob, 4)
-                draw_prob = round(draw_prob / total_prob, 4)
-                away_win_prob = round(away_win_prob / total_prob, 4)
+            # 强制调用模型预测，失败直接终止
+            try:
+                match_features = row.to_dict()
+                fusion_result = model.predict_single_match(raw_match, match_features)
+                final_pred = fusion_result.get("final_prediction", fusion_result)
+            except Exception as e:
+                logger.critical(f"❌ 强制模式开启！比赛{match_name}模型预测失败，管道终止！失败原因：{str(e)}", exc_info=True)
+                exit(1)
 
-                # 生成预测结果
-                prob_dict = {"主胜": home_win_prob, "平局": draw_prob, "客胜": away_win_prob}
-                prediction = max(prob_dict, key=prob_dict.get)
+            # 提取模型输出概率
+            try:
+                home_win_prob = float(final_pred.get("home_win_prob", 
+                    final_pred.get("win_prob", 
+                    final_pred.get("home_prob", 0.0))))
+                draw_prob = float(final_pred.get("draw_prob", 
+                    final_pred.get("tie_prob", 0.0)))
+                away_win_prob = float(final_pred.get("away_win_prob", 
+                    final_pred.get("loss_prob", 
+                    final_pred.get("away_prob", 0.0))))
+            except Exception as e:
+                logger.critical(f"❌ 强制模式开启！比赛{match_name}模型概率提取失败，管道终止！失败原因：{str(e)}", exc_info=True)
+                exit(1)
 
-                # 赋值
-                prediction_df.at[idx, "home_win_prob"] = home_win_prob
-                prediction_df.at[idx, "draw_prob"] = draw_prob
-                prediction_df.at[idx, "away_win_prob"] = away_win_prob
-                prediction_df.at[idx, "prediction"] = prediction
-                prediction_df.at[idx, "model_confidence"] = round(max(min(0.5 + (home_win_prob - 0.4), 0.95), 0.2), 4)
-                prediction_df.at[idx, "expected_value"] = 0.0
-                prediction_df.at[idx, "kelly_suggestion"] = 0.0
-                prediction_df.at[idx, "model_source"] = "保底逻辑"
-                logger.info(f"📊 比赛{match_name}保底逻辑概率：主胜={home_win_prob}, 平局={draw_prob}, 客胜={away_win_prob}, 预测={prediction}")
+            # 打印原始概率，定位问题
+            logger.info(f"📊 比赛{match_name}模型返回概率：主胜={home_win_prob}, 平局={draw_prob}, 客胜={away_win_prob}")
+            all_probs.append((home_win_prob, draw_prob, away_win_prob))
+
+            # 概率合法性校验，无效直接终止
+            if home_win_prob < 0 or draw_prob < 0 or away_win_prob < 0:
+                logger.critical(f"❌ 强制模式开启！比赛{match_name}模型返回负概率，输出异常，管道终止")
+                exit(1)
+            if home_win_prob + draw_prob + away_win_prob <= 0:
+                logger.critical(f"❌ 强制模式开启！比赛{match_name}模型概率总和为0，输出异常，管道终止")
+                exit(1)
+
+            # 自动转换百分比数值为小数
+            if home_win_prob > 1 or draw_prob > 1 or away_win_prob > 1:
+                logger.warning(f"⚠️ 比赛{match_name}模型返回百分比数值，已自动转换为小数")
+                home_win_prob = home_win_prob / 100
+                draw_prob = draw_prob / 100
+                away_win_prob = away_win_prob / 100
+
+            # 强制归一化
+            total_prob = home_win_prob + draw_prob + away_win_prob
+            home_win_prob = round(home_win_prob / total_prob, 4)
+            draw_prob = round(draw_prob / total_prob, 4)
+            away_win_prob = round(away_win_prob / total_prob, 4)
+
+            # 生成预测结果
+            prob_dict = {
+                "主胜": home_win_prob,
+                "平局": draw_prob,
+                "客胜": away_win_prob
+            }
+            prediction = max(prob_dict, key=prob_dict.get)
+
+            # 提取置信度
+            try:
+                model_confidence = float(final_pred.get("confidence", 
+                    final_pred.get("model_confidence", 0.6)))
+                if model_confidence > 1:
+                    model_confidence = model_confidence / 100
+                model_confidence = round(max(min(model_confidence, 0.99), 0.1), 4)
+            except Exception as e:
+                logger.critical(f"❌ 强制模式开启！比赛{match_name}模型置信度提取失败，管道终止！失败原因：{str(e)}", exc_info=True)
+                exit(1)
+
+            # 保存预测结果
+            predictions_list.append({
+                "match_id": match_id,
+                "home_win_prob": home_win_prob,
+                "draw_prob": draw_prob,
+                "away_win_prob": away_win_prob,
+                "prediction": prediction,
+                "expected_value": round(float(final_pred.get("expected_value", 
+                    final_pred.get("ev", 0))), 4),
+                "kelly_suggestion": round(float(final_pred.get("kelly_suggestion", 0)), 4),
+                "model_confidence": model_confidence,
+                "model_source": "你的超级融合模型SuperFusionModel"
+            })
+            success_count += 1
+
+        # 【强制校验】检测模型是否输出固定概率，异常直接终止
+        if len(all_probs) >= 2:
+            first_prob = all_probs[0]
+            all_same = all(p == first_prob for p in all_probs)
+            if all_same:
+                logger.critical("❌ 强制模式开启！检测到模型异常！所有比赛返回完全相同的固定概率，管道终止")
+                logger.critical("❌ 请修复你的SuperFusionModel模型，确保不同比赛返回不同的概率结果")
+                exit(1)
+
+        # 校验所有比赛预测成功
+        if success_count != total_matches:
+            logger.critical(f"❌ 强制模式开启！预测完成度异常，应完成{total_matches}场，实际完成{success_count}场，管道终止")
+            exit(1)
+
+        logger.info(f"✅ 模型预测完成：成功{success_count}场，共{total_matches}场")
+
+        # 合并预测结果
+        pred_result_df = pd.DataFrame(predictions_list)
+        prediction_df = prediction_df.merge(pred_result_df, on="match_id", how="left")
+
+        # 校验合并结果，无缺失值
+        if prediction_df["home_win_prob"].isnull().any():
+            logger.critical("❌ 强制模式开启！预测结果存在缺失值，管道终止")
+            exit(1)
+
+        # ===================== 【核心规则1：过滤低于50%置信度的比赛】=====================
+        logger.info(f"🔍 开始执行置信度过滤：低于{SKIP_CONFIDENCE_THRESHOLD*100}%的比赛直接跳过")
+        total_before_filter = len(prediction_df)
+        prediction_df = prediction_df[prediction_df["model_confidence"] >= SKIP_CONFIDENCE_THRESHOLD].reset_index(drop=True)
+        total_after_filter = len(prediction_df)
+        skip_count = total_before_filter - total_after_filter
+
+        logger.info(f"✅ 过滤完成：共{total_before_filter}场比赛，跳过{skip_count}场低于{SKIP_CONFIDENCE_THRESHOLD*100}%置信度的比赛，剩余{total_after_filter}场有效比赛")
+        
+        # 过滤后无数据，直接终止
+        if total_after_filter == 0:
+            logger.critical("❌ 强制模式开启！过滤后无有效比赛，管道终止")
+            exit(1)
 
         # 注入中文队名
         prediction_df["home_team_cn"] = prediction_df["home_team"].apply(get_team_cn_name)
@@ -525,31 +609,34 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
         prediction_df["h_recent_wins"] = prediction_df["home_recent_wins"]
         prediction_df["a_recent_wins"] = prediction_df["away_recent_wins"]
 
-        # 生成DeepSeek AI分析
-        logger.info("📝 开始生成DeepSeek AI赛事分析")
-        prediction_df["match_analysis"] = "AI分析生成中..."
-        for idx, row in prediction_df.iterrows():
-            prediction_df.at[idx, "match_analysis"] = generate_match_analysis(row.to_dict())
+        # ===================== 【核心规则2：仅≥80%置信度的比赛生成AI分析】=====================
+        logger.info(f"📝 开始生成AI分析：仅≥{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}%置信度的比赛调用API")
+        prediction_df["match_analysis"] = "本场比赛无AI分析，可参考概率数据进行决策"
+
+        # 筛选符合AI生成条件的比赛
+        ai_target_matches = prediction_df[prediction_df["model_confidence"] >= AI_ANALYSIS_CONFIDENCE_THRESHOLD].reset_index(drop=True)
+        logger.info(f"✅ 剩余{total_after_filter}场有效比赛，符合AI分析条件的有{len(ai_target_matches)}场")
+
+        # 仅循环符合条件的比赛，调用API
+        for idx, row in ai_target_matches.iterrows():
+            match_index = prediction_df[prediction_df["match_id"] == row["match_id"]].index[0]
+            prediction_df.at[match_index, "match_analysis"] = generate_match_analysis(row.to_dict())
         
         # 最终统计
         home_win_count = len(prediction_df[prediction_df['prediction'] == '主胜'])
         draw_count = len(prediction_df[prediction_df['prediction'] == '平局'])
         away_win_count = len(prediction_df[prediction_df['prediction'] == '客胜'])
-        model_count = len(prediction_df[prediction_df['model_source'] == '你的超级融合模型SuperFusionModel'])
-        logger.info(f"✅ 全部预测完成，共{len(prediction_df)}场比赛")
+        logger.info(f"✅ 全部预测&过滤完成，最终有效比赛共{len(prediction_df)}场，100%来自你的超级融合模型")
         logger.info(f"📊 最终预测统计：主胜{home_win_count}场，平局{draw_count}场，客胜{away_win_count}场")
-        logger.info(f"📊 数据来源：你的超级融合模型{model_count}场，保底逻辑{len(prediction_df)-model_count}场")
         return prediction_df
     
     except Exception as e:
-        logger.error(f"模型预测出错：{str(e)}", exc_info=True)
-        if FORCE_USE_FUSION_MODEL:
-            exit(1)
-        return pd.DataFrame()
+        logger.critical(f"❌ 强制模式开启！模型预测环节异常，管道终止！失败原因：{str(e)}", exc_info=True)
+        exit(1)
 
 # ===================== 静态页面生成 =====================
 def generate_static_page(prediction_df: pd.DataFrame):
-    """生成GitHub Pages静态页面，适配手机端"""
+    """生成GitHub Pages静态页面，适配手机端，仅展示过滤后的有效比赛"""
     try:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         
@@ -561,7 +648,9 @@ def generate_static_page(prediction_df: pd.DataFrame):
             "matches_count": len(prediction_df),
             "competitions": COMPETITIONS,
             "deepseek_enabled": DEEPSEEK_AVAILABLE,
-            "model_used": "你的超级融合模型SuperFusionModel" if MODEL_AVAILABLE else "保底逻辑",
+            "model_used": "你的超级融合模型SuperFusionModel（强制纯模型模式）",
+            "skip_confidence": f"{SKIP_CONFIDENCE_THRESHOLD*100}%",
+            "ai_confidence": f"{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}%",
             "predictions": []
         }
         
@@ -586,7 +675,7 @@ def generate_static_page(prediction_df: pd.DataFrame):
         home_win_count = len(prediction_df[prediction_df['prediction'] == '主胜']) if not prediction_df.empty else 0
         avg_confidence = round(prediction_df['model_confidence'].mean() * 100, 1) if not prediction_df.empty else 0.0
         avg_confidence = max(min(avg_confidence, 100), 0)
-        model_count = len(prediction_df[prediction_df['model_source'] == '你的超级融合模型SuperFusionModel']) if not prediction_df.empty else 0
+        ai_count = len(prediction_df[prediction_df['model_confidence'] >= AI_ANALYSIS_CONFIDENCE_THRESHOLD]) if not prediction_df.empty else 0
 
         html_content = f"""
 <!DOCTYPE html>
@@ -594,13 +683,14 @@ def generate_static_page(prediction_df: pd.DataFrame):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>足球赛事预测结果 - 超级融合模型版</title>
+    <title>足球赛事预测结果 - 纯融合模型版</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
         body {{ background: #f5f7fa; padding: 15px; max-width: 100%; margin: 0 auto; }}
         .header {{ text-align: center; margin-bottom: 25px; }}
         .header h1 {{ color: #2c3e50; margin-bottom: 10px; font-size: 24px; line-height: 1.4; }}
         .header .info {{ color: #7f8c8d; font-size: 13px; margin-top: 6px; }}
+        .rule-tag {{ display: inline-block; background: #3498db; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin: 0 3px; }}
         .stats {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 25px; }}
         .stat-card {{ background: white; padding: 18px 12px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); text-align: center; }}
         .stat-card .num {{ font-size: 32px; font-weight: bold; color: #3498db; margin-bottom: 6px; }}
@@ -626,39 +716,44 @@ def generate_static_page(prediction_df: pd.DataFrame):
         .prediction-tag.away {{ background: #f8d7da; color: #721c24; }}
         .analysis-box {{ margin: 0 15px 15px; padding: 12px; background: #f8f9fa; border-radius: 8px; font-size: 13px; line-height: 1.6; color: #34495e; }}
         .match-meta {{ display: flex; justify-content: space-between; padding: 10px 15px; border-top: 1px solid #ecf0f1; font-size: 12px; color: #7f8c8d; flex-wrap: wrap; gap: 8px; }}
+        .confidence-tag {{ padding: 2px 6px; border-radius: 4px; color: white; }}
+        .confidence-high {{ background: #28a745; }}
+        .confidence-normal {{ background: #ffc107; color: #212529; }}
         .empty {{ text-align: center; padding: 60px 20px; color: #7f8c8d; font-size: 16px; }}
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>⚽ 足球赛事预测结果 - 超级融合模型版</h1>
+        <h1>⚽ 足球赛事预测结果 - 纯融合模型版</h1>
         <div class="info">
             生成时间：{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")} | 预测未来 {PREDICT_DAYS} 天赛事
         </div>
         <div class="info">
-            核心引擎：{'你的超级融合模型SuperFusionModel' if MODEL_AVAILABLE else '保底逻辑'} | DeepSeek AI：{'✅ 已启用' if DEEPSEEK_AVAILABLE else '❌ 未启用'}
+            核心规则：
+            <span class="rule-tag">置信度<{SKIP_CONFIDENCE_THRESHOLD*100}% 直接跳过</span>
+            <span class="rule-tag">置信度≥{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}% 生成AI分析</span>
         </div>
         <div class="info">
-            模型覆盖：{model_count}场 / 总场次{total_matches}
+            核心引擎：你的超级融合模型SuperFusionModel | 强制纯模型模式
         </div>
     </div>
 
     <div class="stats">
         <div class="stat-card">
             <div class="num">{total_matches}</div>
-            <div class="label">预测赛事总数</div>
+            <div class="label">有效预测赛事</div>
         </div>
         <div class="stat-card">
             <div class="num">{len(COMPETITIONS)}</div>
-            <div class="label">覆盖联赛数</div>
+            <div class="label">覆盖赛事数</div>
         </div>
         <div class="stat-card">
             <div class="num">{avg_confidence}%</div>
-            <div class="label">平均模型置信度</div>
+            <div class="label">平均置信度</div>
         </div>
         <div class="stat-card">
-            <div class="num">{home_win_count}</div>
-            <div class="label">主胜预测场次</div>
+            <div class="num">{ai_count}</div>
+            <div class="label">AI分析场次</div>
         </div>
     </div>
 
@@ -697,16 +792,16 @@ def generate_static_page(prediction_df: pd.DataFrame):
             最终预测：{row["prediction"]}
         </div>
         <div class="analysis-box">
-            <strong>AI赛事分析：</strong>{row["match_analysis"]}
+            <strong>赛事分析：</strong>{row["match_analysis"]}
         </div>
         <div class="match-meta">
-            <span>数据来源：{row["model_source"]}</span>
-            <span>置信度：{round(row["model_confidence"]*100, 1)}%</span>
+            <span>置信度：<span class="confidence-tag {'confidence-high' if row['model_confidence'] >= 0.8 else 'confidence-normal'}">{round(row["model_confidence"]*100, 1)}%</span></span>
             <span>EV值：{round(row["expected_value"]*100, 2)}%</span>
+            <span>凯利建议：{row["kelly_suggestion"]}</span>
         </div>
     </div>
     ''' for row in result_json["predictions"]]) if len(result_json["predictions"]) > 0 else '''
-    <div class="empty">暂无预测数据，管道运行正常，请重新运行预测管道</div>
+    <div class="empty">暂无有效预测比赛，所有比赛置信度均低于{SKIP_CONFIDENCE_THRESHOLD*100}%</div>
     '''}
 </body>
 </html>
@@ -718,7 +813,8 @@ def generate_static_page(prediction_df: pd.DataFrame):
         logger.info(f"✅ GitHub Pages静态页面已生成，部署就绪")
     
     except Exception as e:
-        logger.error(f"生成静态页面出错：{str(e)}", exc_info=True)
+        logger.critical(f"❌ 静态页面生成异常，管道终止！失败原因：{str(e)}", exc_info=True)
+        exit(1)
 
 # ===================== 执行报告生成 =====================
 def generate_execution_report(
@@ -738,10 +834,15 @@ def generate_execution_report(
     
     report = {
         "timestamp": end_time.isoformat().replace("+00:00", "Z"),
-        "status": "success" if predictions_count > 0 else "completed_with_warning",
-        "core_model": "你的超级融合模型SuperFusionModel" if MODEL_AVAILABLE else "保底逻辑",
+        "status": "success" if predictions_count > 0 else "failed",
+        "core_model": "你的超级融合模型SuperFusionModel（强制纯模型模式）",
         "deepseek_enabled": DEEPSEEK_AVAILABLE,
-        "force_fusion_mode": FORCE_USE_FUSION_MODEL,
+        "force_fusion_mode": True,
+        "rules": {
+            "skip_confidence_threshold": SKIP_CONFIDENCE_THRESHOLD,
+            "ai_analysis_threshold": AI_ANALYSIS_CONFIDENCE_THRESHOLD
+        },
+        "competitions": COMPETITIONS,
         "stages_completed": [
             "api_key_validation",
             "external_scrape",
@@ -749,13 +850,14 @@ def generate_execution_report(
             "historical_data_load",
             "feature_engineering",
             "model_prediction",
+            "confidence_filter",
+            "ai_analysis_generation",
             "static_page_generation"
         ],
         "error": error,
-        "warning": "无有效预测结果" if predictions_count == 0 else "",
-        "matches_count": matches_count,
+        "original_matches_count": matches_count,
+        "final_valid_matches_count": predictions_count,
         "features_shape": list(features_shape),
-        "predictions_count": predictions_count,
         "duration_minutes": duration_minutes
     }
     
@@ -770,7 +872,7 @@ def generate_execution_report(
 
 # ===================== 主管道入口 =====================
 def main():
-    """主管道入口，全流程异常兜底"""
+    """主管道入口，强制纯模型模式，异常直接终止"""
     start_time = datetime.now(timezone.utc)
     conn = None
     final_error = None
@@ -780,7 +882,7 @@ def main():
     all_matches = []
     
     logger.info("="*66)
-    logger.info("🚀 STARTING FULL FOOTBALL PREDICTION PIPELINE")
+    logger.info("🚀 STARTING FULL FOOTBALL PREDICTION PIPELINE - 强制纯模型模式")
     logger.info("="*66)
     
     try:
@@ -789,7 +891,7 @@ def main():
         valid_keys = validate_and_get_api_keys()
         if len(valid_keys) == 0:
             raise Exception("无有效API密钥，管道终止")
-        # DeepSeek初始化
+        # API初始化
         init_deepseek()
         
         # 初始化核心组件
@@ -797,7 +899,7 @@ def main():
         collector = FootballDataCollector(DB_PATH)
         conn = init_database()
         init_prediction_model()
-        logger.info("✅ 管道初始化成功，所有API密钥、模型配置正常")
+        logger.info("✅ 管道初始化成功，所有API密钥、模型配置正常，强制纯模型模式已开启")
 
         # 阶段1：外部爬虫
         logger.info("🕷️ 阶段1：运行外部爬虫 (500 & okooo)")
@@ -810,7 +912,7 @@ def main():
         logger.info("📊 阶段2：赛事数据采集 (API & 缓存)")
         all_matches = []
         for comp_code in COMPETITIONS:
-            logger.info(f"  正在获取 {comp_code} 联赛赛程...")
+            logger.info(f"  正在获取 {comp_code} 赛事赛程...")
             matches = aggregator.fdb.get_matches(
                 competition_code=comp_code,
                 days=PREDICT_DAYS
@@ -818,9 +920,9 @@ def main():
             if len(matches) > 0:
                 collector.save_matches(matches, comp_code)
                 all_matches.extend(matches)
-                logger.info(f"  ✅ {comp_code} 联赛成功获取 {len(matches)} 场比赛")
+                logger.info(f"  ✅ {comp_code} 赛事成功获取 {len(matches)} 场比赛")
             else:
-                logger.warning(f"  ⚠️ {comp_code} 联赛未获取到有效比赛")
+                logger.warning(f"  ⚠️ {comp_code} 赛事未获取到有效比赛")
         
         matches_count = len(all_matches)
         if matches_count == 0:
@@ -837,16 +939,16 @@ def main():
         features_shape = features_df.shape
 
         if features_df.empty:
-            raise Exception("未从比赛中提取到有效特征")
+            raise Exception("未从比赛中提取到有效特征，管道终止")
         logger.info(f"✅ 特征工程完成，特征数据集形状：{features_shape}")
 
-        # 阶段5：模型预测
-        logger.info("🤖 阶段5：模型预测")
+        # 阶段5：模型预测+置信度过滤
+        logger.info("🤖 阶段5：模型预测+置信度过滤（强制纯模型模式）")
         prediction_df = run_prediction_model(features_df, all_matches)
         predictions_count = len(prediction_df)
 
         if prediction_df.empty:
-            raise Exception("模型预测未生成有效结果")
+            raise Exception("模型预测未生成有效结果，管道终止")
 
         # 阶段6：生成静态页面
         logger.info("📄 阶段6：生成预测结果与静态页面")
@@ -859,11 +961,11 @@ def main():
             features_shape=features_shape,
             predictions_count=predictions_count
         )
-        logger.info("🎉 全预测管道执行成功！GitHub Pages部署就绪")
+        logger.info("🎉 全预测管道执行成功！100%使用你的超级融合模型，GitHub Pages部署就绪")
 
     except Exception as e:
         final_error = str(e)
-        logger.critical(f"❌ 管道执行异常：{final_error}", exc_info=True)
+        logger.critical(f"❌ 管道执行异常，已终止！失败原因：{final_error}", exc_info=True)
         generate_execution_report(
             start_time=start_time,
             matches_count=matches_count,
