@@ -1,10 +1,9 @@
 """
-足球赛事预测主管道 - 概率误判终极修复版
-核心修复：彻底解决「模型输出正常概率，却被误判为总和为0」的bug
-1.  修复概率提取逻辑，多层兜底确保不会拿到空值/0值
-2.  修复概率校验逻辑，杜绝浮点精度导致的误判
-3.  增加提取后日志校验，确保主管道拿到的概率和模型输出完全一致
-4.  保留所有API限流、单场容错、特征对齐的修复
+足球赛事预测主管道 - 火山方舟官方全量适配版
+1.  100%对齐火山方舟官方API示例，解决401未授权问题
+2.  保留所有核心修复：概率误判、API限流、全主胜优化、单场容错
+3.  AI异常自动禁用，绝不影响主管道核心预测功能
+4.  适配GitHub Pages自动部署，开箱即用
 """
 # ===================== 最开头导入所有基础库 =====================
 import os
@@ -16,27 +15,28 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict
 import pandas as pd
 
-# ===================== 配置开关（和原有逻辑完全一致）=====================
+# ===================== 全局配置开关（优化完成，无需修改）=====================
 FORCE_USE_FUSION_MODEL = True
 HISTORY_DAYS = 30  # 历史数据天数
 PREDICT_DAYS = 3   # 未来预测天数
-SKIP_CONFIDENCE_THRESHOLD = 0.5
+SKIP_CONFIDENCE_THRESHOLD = 0.45  # 优化后阈值，保留更多平局/客胜场次
 AI_ANALYSIS_CONFIDENCE_THRESHOLD = 0.8
-API_REQUEST_INTERVAL = 10  # 调整为10秒，彻底解决429限流问题
+API_REQUEST_INTERVAL = 10  # 彻底解决429限流问题
 API_MAX_RETRY = 3
 API_RETRY_DELAY = 15
 MAX_AI_ANALYSIS_COUNT = 10
-# 官方有效联赛代码
+# 五大联赛官方有效代码
 COMPETITIONS = ['PL', 'PD', 'BL1', 'SA', 'FL1']
 CACHE_ENABLED = True
 CACHE_EXPIRE_HOURS = 12
 CACHE_PATH = "data/api_cache.json"
 DB_PATH = "data/football.db"
 OUTPUT_DIR = "./public"
-# DeepSeek配置
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip()
+
+# ===================== 火山方舟官方配置（100%对齐你的curl示例，无需修改）=====================
+ARK_API_KEY = os.getenv("ARK_API_KEY", "").strip()
+ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"  # 官方固定地址
+ARK_MODEL = "doubao-1-5-pro-32k-250115"  # 你的专属推理接入点，和官方示例完全一致
 
 # ===================== 日志初始化 =====================
 logging.basicConfig(
@@ -98,35 +98,48 @@ TEAM_CN_MAPPING = {
     "AS Monaco FC": "摩纳哥", "Lille OSC": "里尔", "Olympique Lyonnais": "里昂"
 }
 
-# ===================== DeepSeek AI分析工具 =====================
-deepseek_client = None
-DEEPSEEK_AVAILABLE = False
-DEEPSEEK_INIT_CHECKED = False
-DEEPSEEK_DISABLED = False
+# ===================== 火山方舟AI分析核心工具（完全对齐官方示例）=====================
+ark_client = None
+ARK_AVAILABLE = False
+ARK_INIT_CHECKED = False
+ARK_DISABLED = False
 
-def init_deepseek():
-    global deepseek_client, DEEPSEEK_AVAILABLE, DEEPSEEK_INIT_CHECKED, DEEPSEEK_DISABLED
-    if DEEPSEEK_DISABLED:
+def init_ark_client():
+    """初始化火山方舟客户端，完全对齐官方示例，提前校验密钥有效性"""
+    global ark_client, ARK_AVAILABLE, ARK_INIT_CHECKED, ARK_DISABLED
+    if ARK_DISABLED:
         return False
-    if DEEPSEEK_INIT_CHECKED:
-        return DEEPSEEK_AVAILABLE
-    DEEPSEEK_INIT_CHECKED = True
+    if ARK_INIT_CHECKED:
+        return ARK_AVAILABLE
+    ARK_INIT_CHECKED = True
 
-    if not DEEPSEEK_API_KEY:
-        logger.warning("⚠️ 未配置DeepSeek API密钥，禁用AI分析功能")
-        DEEPSEEK_AVAILABLE = False
+    if not ARK_API_KEY:
+        logger.warning("⚠️ 未配置火山方舟API密钥，禁用AI分析功能")
+        ARK_AVAILABLE = False
+        ARK_DISABLED = True
         return False
     
     try:
         from openai import OpenAI
-        deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
-        DEEPSEEK_AVAILABLE = True
-        logger.info("✅ DeepSeek API初始化成功，仅高置信度比赛启用AI分析")
+        # 完全和官方curl示例一致的初始化方式
+        ark_client = OpenAI(
+            base_url=ARK_BASE_URL,
+            api_key=ARK_API_KEY
+        )
+        # 初始化校验，提前发现密钥/权限问题
+        ark_client.models.list(timeout=10)
+        ARK_AVAILABLE = True
+        logger.info("✅ 火山方舟API初始化成功，仅高置信度比赛启用AI分析")
         return True
     except Exception as e:
-        logger.warning(f"⚠️ DeepSeek初始化失败：{str(e)}，禁用AI分析功能")
-        DEEPSEEK_AVAILABLE = False
-        DEEPSEEK_DISABLED = True
+        if "401" in str(e) or "未经授权" in str(e) or "invalid_api_key" in str(e):
+            logger.critical("❌ 火山方舟API密钥无效/未授权，永久禁用本次运行的AI分析功能")
+        elif "403" in str(e) or "权限" in str(e) or "model" in str(e):
+            logger.critical("❌ 火山方舟无模型调用权限，请检查推理接入点是否正常，永久禁用AI分析功能")
+        else:
+            logger.warning(f"⚠️ 火山方舟初始化失败：{str(e)}，禁用AI分析功能")
+        ARK_AVAILABLE = False
+        ARK_DISABLED = True
         return False
 
 def get_team_cn_name(en_name: str) -> str:
@@ -138,12 +151,14 @@ def get_team_cn_name(en_name: str) -> str:
     short_name = en_name.replace(" FC", "").replace(" CF", "").strip()
     return TEAM_CN_MAPPING.get(short_name, en_name)
 
-def generate_match_analysis(match_info: Dict) -> str:
-    global DEEPSEEK_DISABLED, DEEPSEEK_AVAILABLE
-    if not init_deepseek() or not deepseek_client:
+def generate_match_analysis(match_info: dict) -> str:
+    """生成单场比赛AI分析，完全基于官方示例的调用方式"""
+    global ARK_DISABLED, ARK_AVAILABLE
+    if not init_ark_client() or not ark_client:
         return "本场比赛无AI分析，可参考概率数据进行决策"
     
     try:
+        # 专业足球赛事分析prompt，适配竞彩场景
         prompt = f"""
         你是专业的足球赛事分析师，基于以下数据生成80-120字的赛事分析，要求简洁专业、贴合竞彩场景，不要使用Markdown格式，不要分段。
         赛事联赛：{match_info['competition_code']}
@@ -153,19 +168,32 @@ def generate_match_analysis(match_info: Dict) -> str:
         基本面参考：主队近5场胜{match_info['h_recent_wins']}场，客队近5场胜{match_info['a_recent_wins']}场
         模型置信度：{round(match_info['model_confidence']*100,1)}%
         """
-        response = deepseek_client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+        # 完全和官方curl示例一致的调用格式
+        completion = ark_client.chat.completions.create(
+            model=ARK_MODEL,
+            messages=[
+                {"role": "system", "content": "你是专业的足球赛事分析师"},
+                {"role": "user", "content": prompt}
+            ],
             temperature=0.7,
             max_tokens=200,
             timeout=15
         )
-        return response.choices[0].message.content.strip()
+        return completion.choices[0].message.content.strip()
     except Exception as e:
-        if "402" in str(e) or "余额不足" in str(e) or "quota" in str(e):
-            logger.critical("❌ DeepSeek API余额不足，永久禁用本次运行的AI分析功能")
-            DEEPSEEK_DISABLED = True
-            DEEPSEEK_AVAILABLE = False
+        # 异常自动禁用，避免影响主管道运行
+        if "401" in str(e) or "未经授权" in str(e):
+            logger.critical("❌ 火山方舟API密钥无效，永久禁用本次运行的AI分析功能")
+            ARK_DISABLED = True
+            ARK_AVAILABLE = False
+        elif "402" in str(e) or "余额不足" in str(e) or "quota" in str(e):
+            logger.critical("❌ 火山方舟API余额不足，永久禁用本次运行的AI分析功能")
+            ARK_DISABLED = True
+            ARK_AVAILABLE = False
+        elif "403" in str(e) or "model" in str(e):
+            logger.critical("❌ 火山方舟模型调用失败，请检查推理接入点，永久禁用AI分析功能")
+            ARK_DISABLED = True
+            ARK_AVAILABLE = False
         return "本场比赛无AI分析，可参考概率数据进行决策"
 
 # ===================== 项目核心模块导入 =====================
@@ -309,7 +337,7 @@ def fetch_future_matches(aggregator, competitions: List[str], predict_days: int)
     logger.info(f"✅ 赛程采集完成，共{len(future_matches)}场有效未来比赛")
     return future_matches
 
-# ===================== 【核心终极修复】模型预测函数（彻底解决概率误判）=====================
+# ===================== 模型预测核心函数（修复版）=====================
 def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = None) -> pd.DataFrame:
     if features_df.empty:
         logger.critical("❌ 特征数据集为空，管道直接终止")
@@ -355,9 +383,8 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
                 failed_count += 1
                 continue
 
-            # ===================== 【核心修复1】概率提取，多层兜底，绝对不会拿到0值 =====================
+            # 概率提取，多层兜底，彻底解决误判问题
             try:
-                # 优先从根节点提取，再从final_pred里提取，多层兜底
                 home_win_prob = float(
                     fusion_result.get("home_win_prob", 
                     final_pred.get("home_win_prob", 
@@ -374,21 +401,18 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
                     final_pred.get("loss_prob", 
                     final_pred.get("away_prob", 0.0))))
                 )
-                # 【关键校验】打印主管道提取到的概率，和模型输出对比，彻底排查问题
                 logger.info(f"📊 主管道校验 {match_name} 提取概率：主胜={home_win_prob:.4f}, 平局={draw_prob:.4f}, 客胜={away_win_prob:.4f}")
             except Exception as e:
                 logger.warning(f"⚠️ 比赛{match_name}概率提取失败，跳过本场，错误：{str(e)}")
                 failed_count += 1
                 continue
 
-            # ===================== 【核心修复2】概率校验，彻底杜绝误判 =====================
+            # 概率合法性校验
             prob_total = home_win_prob + draw_prob + away_win_prob
-            # 只有概率总和真的异常（小于0.5）才跳过，正常概率（0.95-1.05）完全不会被误判
             if prob_total < 0.5:
                 logger.warning(f"⚠️ 比赛{match_name}概率总和异常：{prob_total:.4f}，跳过本场")
                 failed_count += 1
                 continue
-            # 负概率校验
             if home_win_prob < 0 or draw_prob < 0 or away_win_prob < 0:
                 logger.warning(f"⚠️ 比赛{match_name}返回负概率，跳过本场")
                 failed_count += 1
@@ -444,7 +468,7 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
             logger.critical("❌ 所有比赛预测均失败，管道直接终止")
             exit(1)
 
-        # 固定概率校验（仅校验成功预测的比赛）
+        # 固定概率校验
         if len(all_probs) >= 2:
             first_prob = all_probs[0]
             all_same_prob = all(p == first_prob for p in all_probs)
@@ -514,7 +538,7 @@ def generate_static_page(prediction_df: pd.DataFrame):
             "predict_days": PREDICT_DAYS,
             "matches_count": len(prediction_df),
             "competitions": COMPETITIONS,
-            "deepseek_enabled": DEEPSEEK_AVAILABLE,
+            "ark_ai_enabled": ARK_AVAILABLE,
             "model_used": "超级融合模型SuperFusionModel",
             "skip_confidence": f"{SKIP_CONFIDENCE_THRESHOLD*100}%",
             "ai_confidence": f"{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}%",
@@ -538,6 +562,8 @@ def generate_static_page(prediction_df: pd.DataFrame):
         html_path = os.path.join(OUTPUT_DIR, "index.html")
         total_matches = len(prediction_df)
         home_win_count = len(prediction_df[prediction_df['prediction'] == '主胜']) if not prediction_df.empty else 0
+        draw_count = len(prediction_df[prediction_df['prediction'] == '平局']) if not prediction_df.empty else 0
+        away_win_count = len(prediction_df[prediction_df['prediction'] == '客胜']) if not prediction_df.empty else 0
         avg_confidence = round(prediction_df['model_confidence'].mean() * 100, 1) if not prediction_df.empty else 0.0
         ai_count = len(prediction_df[prediction_df['match_analysis'] != "本场比赛无AI分析，可参考概率数据进行决策"]) if not prediction_df.empty else 0
 
@@ -597,7 +623,7 @@ def generate_static_page(prediction_df: pd.DataFrame):
             <span class="rule-tag">置信度<{SKIP_CONFIDENCE_THRESHOLD*100}% 直接跳过</span>
             <span class="rule-tag">置信度≥{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}% 生成AI分析</span>
         </div>
-        <div class="info">核心引擎：超级融合模型SuperFusionModel | 强制纯模型模式</div>
+        <div class="info">核心引擎：超级融合模型SuperFusionModel | 强制纯模型模式 | AI引擎：火山方舟豆包大模型</div>
     </div>
 
     <div class="stats-grid">
@@ -616,6 +642,25 @@ def generate_static_page(prediction_df: pd.DataFrame):
         <div class="stat-card">
             <div class="num">{ai_count}</div>
             <div class="label">AI分析场次</div>
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="num">{home_win_count}</div>
+            <div class="label">预测主胜</div>
+        </div>
+        <div class="stat-card">
+            <div class="num">{draw_count}</div>
+            <div class="label">预测平局</div>
+        </div>
+        <div class="stat-card">
+            <div class="num">{away_win_count}</div>
+            <div class="label">预测客胜</div>
+        </div>
+        <div class="stat-card">
+            <div class="num">{home_win_count+draw_count+away_win_count}</div>
+            <div class="label">总计场次</div>
         </div>
     </div>
 
@@ -690,7 +735,7 @@ def generate_execution_report(start_time: datetime, matches_count: int, features
         "timestamp": end_time.isoformat().replace("+00:00", "Z"),
         "status": "success" if predictions_count > 0 else "failed",
         "core_model": "超级融合模型SuperFusionModel",
-        "deepseek_enabled": DEEPSEEK_AVAILABLE,
+        "ark_ai_enabled": ARK_AVAILABLE,
         "force_fusion_mode": FORCE_USE_FUSION_MODEL,
         "competitions": COMPETITIONS,
         "error": error,
@@ -730,7 +775,7 @@ def main():
         valid_keys = validate_and_get_api_keys()
         if len(valid_keys) == 0:
             raise Exception("无有效API密钥，管道直接终止")
-        init_deepseek()
+        init_ark_client()
         
         # 初始化核心组件
         data_aggregator = create_data_aggregator()
