@@ -49,11 +49,18 @@ jobs:
           fi
         shell: bash
 
-      - name: 运行完整预测管道（适配DeepSeek大模型）
+      - name: 运行完整预测管道（适配DeepSeek大模型+密钥验证）
         run: |
+          # 密钥有效性验证：输出密钥长度，不会泄露密钥明文，确认是否成功传递
+          echo "=== 密钥传递验证结果 ==="
+          echo "API_FOOTBALL_KEY 长度：${#API_FOOTBALL_KEY}"
+          echo "FOOTBALL_DATA_KEY 长度：${#FOOTBALL_DATA_KEY}"
+          echo "ODDS_API_KEY 长度：${#ODDS_API_KEY}"
+          echo "=========================="
+          # 执行核心预测脚本
           python -m src.build_pipeline
         env:
-          # 核心赛事数据API（必填）
+          # 核心赛事数据API（必填，名称必须和存储库密钥完全一致）
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
           FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
