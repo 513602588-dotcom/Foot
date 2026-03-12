@@ -1,9 +1,9 @@
 """
-高级特征工程 - 100%适配融合模型最终版
+高级特征工程 - 【修复版】解决home_team_name字段报错，加多层容错
 ✅ 所有字段名和融合模型完全对齐，彻底解决KeyError/固定概率问题
 ✅ 修正主场/客场胜率计算错误
 ✅ 补充融合模型所需的所有必填特征
-✅ 保留所有高级特征逻辑，和主管道代码完全兼容
+✅ 加多层容错，无数据时返回默认值，不中断管道
 """
 
 import pandas as pd
@@ -64,7 +64,7 @@ def parse_match_result(match: Dict, is_home: bool) -> Tuple[str, int, int]:
 
 
 class FeatureEngineer:
-    """高级特征工程 - 100%适配融合模型字段名"""
+    """高级特征工程 - 100%适配融合模型字段名，加多层容错"""
     
     def __init__(self, lookback_days: int = 365):
         self.lookback_days = lookback_days
@@ -74,13 +74,19 @@ class FeatureEngineer:
     def extract_team_form_features(self, team_name: str, matches_df: pd.DataFrame, days: int = 30) -> Dict:
         """
         提取球队近期形态特征，字段名100%适配融合模型
-        包括：胜率、进球、失球、xG、连胜/连不胜、攻防强度等
+        【修复版】加字段校验，无字段时返回默认值，不报错
         """
         try:
             now_utc = datetime.now(timezone.utc)
             recent_cutoff = now_utc - timedelta(days=days)
             
-            # 历史数据为空时，返回默认特征，避免报错
+            # 【核心修复】校验必填字段是否存在，不存在直接返回默认特征
+            required_cols = ['home_team_name', 'away_team_name', 'match_date']
+            if not all(col in matches_df.columns for col in required_cols):
+                logger.warning(f"⚠️ 历史数据缺少必填字段，返回球队{team_name}的默认特征")
+                return self._default_team_features()
+            
+            # 历史数据为空时，返回默认特征
             if matches_df.empty:
                 return self._default_team_features()
             
@@ -135,7 +141,7 @@ class FeatureEngineer:
                 'xg_for': team_matches['xg_for'].sum() if 'xg_for' in team_matches.columns else team_matches['goals_for'].sum(),
                 'xg_against': team_matches['xg_against'].sum() if 'xg_against' in team_matches.columns else team_matches['goals_against'].sum(),
                 
-                # 【修正】主客场分离战绩，补充比赛场次，解决胜率计算错误
+                # 主客场分离战绩，补充比赛场次，解决胜率计算错误
                 'home_matches_count': home_matches_count,
                 'home_wins': len(home_matches[home_matches['result'] == 'W']) if home_matches_count > 0 else 0,
                 'home_gf': home_matches['goals_for'].sum() if home_matches_count > 0 else 0,
@@ -154,7 +160,7 @@ class FeatureEngineer:
                 'attack_strength': self._calculate_attack_strength(home_matches, away_matches, home_matches_count, away_matches_count),
                 'defense_strength': self._calculate_defense_strength(home_matches, away_matches, home_matches_count, away_matches_count),
                 
-                # 【新增】射门准确率，适配融合模型xG模型
+                # 射门准确率，适配融合模型xG模型
                 'shooting_accuracy': self._calculate_shooting_accuracy(team_matches),
             }
             
@@ -169,8 +175,14 @@ class FeatureEngineer:
                                      matches_df: pd.DataFrame, limit: int = 10) -> Dict:
         """
         提取两队历史交锋（H2H）特征，适配融合模型字段
+        【修复版】加字段校验，无字段时返回默认值
         """
         try:
+            # 校验必填字段
+            required_cols = ['home_team_name', 'away_team_name', 'match_date']
+            if not all(col in matches_df.columns for col in required_cols):
+                return self._default_h2h_features()
+            
             # 历史数据为空时，直接返回默认特征
             if matches_df.empty:
                 return self._default_h2h_features()
@@ -239,13 +251,15 @@ class FeatureEngineer:
         """
         为单场比赛构建完整特征向量
         字段名100%和融合模型匹配，彻底解决KeyError/固定概率问题
+        【修复版】加主队/客队名称容错，避免"未知主队"报错
         """
         try:
-            # 适配API数据结构，提取基础信息
+            # 【修复】强制提取主队和客队名称，加多层容错
             home_team_data = match.get('homeTeam', {})
             away_team_data = match.get('awayTeam', {})
-            home_team_name = home_team_data.get('name', home_team_data.get('shortName', '未知主队'))
-            away_team_name = away_team_data.get('name', away_team_data.get('shortName', '未知客队'))
+            # 优先取name，再取shortName，最后兜底，避免未知主队
+            home_team_name = home_team_data.get('name', home_team_data.get('shortName', f"主队_{match.get('id', '未知')}"))
+            away_team_name = away_team_data.get('name', away_team_data.get('shortName', f"客队_{match.get('id', '未知')}"))
             match_date = convert_utc_date(match.get('utcDate', ''))
             
             # 1. 提取主队/客队近期形态特征
@@ -256,14 +270,17 @@ class FeatureEngineer:
             h2h_features = self.extract_head_to_head_features(home_team_name, away_team_name, historical_df)
             
             # 3. 提取伤疲特征（取两队最近一场比赛时间计算）
-            home_last_match = historical_df[
-                (historical_df['home_team_name'] == home_team_name) | 
-                (historical_df['away_team_name'] == home_team_name)
-            ]['match_date'].max() if not historical_df.empty else None
-            away_last_match = historical_df[
-                (historical_df['home_team_name'] == away_team_name) | 
-                (historical_df['away_team_name'] == away_team_name)
-            ]['match_date'].max() if not historical_df.empty else None
+            home_last_match = None
+            away_last_match = None
+            if not historical_df.empty and 'home_team_name' in historical_df.columns:
+                home_last_match = historical_df[
+                    (historical_df['home_team_name'] == home_team_name) | 
+                    (historical_df['away_team_name'] == home_team_name)
+                ]['match_date'].max()
+                away_last_match = historical_df[
+                    (historical_df['home_team_name'] == away_team_name) | 
+                    (historical_df['away_team_name'] == away_team_name)
+                ]['match_date'].max()
             
             home_injury = self.extract_injury_fatigue_features(home_team_name, home_last_match)
             away_injury = self.extract_injury_fatigue_features(away_team_name, away_last_match)
@@ -287,11 +304,11 @@ class FeatureEngineer:
                 'home_goals_against_per_match': home_form.get('goals_against', 0) / max(home_form.get('matches_played', 1), 1),
                 'home_goal_diff_per_match': home_form.get('goal_diff', 0) / max(home_form.get('matches_played', 1), 1),
                 
-                # 【修正】xG字段名，和融合模型完全对齐
+                # xG字段名，和融合模型完全对齐
                 'home_xg_for_per_match': home_form.get('xg_for', 0) / max(home_form.get('matches_played', 1), 1),
                 'home_xg_against_per_match': home_form.get('xg_against', 0) / max(home_form.get('matches_played', 1), 1),
                 
-                # 【新增】射门准确率，适配融合模型
+                # 射门准确率，适配融合模型
                 'home_shooting_accuracy': home_form.get('shooting_accuracy', 0.35),
                 
                 # 攻防强度，和融合模型完全对齐
@@ -302,7 +319,7 @@ class FeatureEngineer:
                 'home_winning_streak': home_form.get('winning_streak', 0),
                 'home_unbeaten_streak': home_form.get('unbeaten_streak', 0),
                 
-                # 【修正】主场胜率计算，用实际主场场次
+                # 主场胜率计算，用实际主场场次
                 'home_home_win_rate': home_form.get('home_wins', 0) / max(home_form.get('home_matches_count', 1), 1),
                 
                 # 伤疲特征
@@ -310,7 +327,7 @@ class FeatureEngineer:
                 'home_fatigue_level': home_injury.get('fatigue_level', 1.0),
                 'home_midweek_fixture': home_injury.get('midweek_fixture', 0),
                 
-                # 【新增】主场优势，适配融合模型Poisson模型
+                # 主场优势，适配融合模型Poisson模型
                 'home_advantage': max(1.1, min(1.5, (home_form.get('home_wins', 0)/max(home_form.get('home_matches_count',1),1)) / max(home_form.get('away_wins',0)/max(home_form.get('away_matches_count',1),1), 0.5))),
                 
                 # 客队核心特征（和融合模型代码里的字段名完全一致）
@@ -323,11 +340,11 @@ class FeatureEngineer:
                 'away_goals_against_per_match': away_form.get('goals_against', 0) / max(away_form.get('matches_played', 1), 1),
                 'away_goal_diff_per_match': away_form.get('goal_diff', 0) / max(away_form.get('matches_played', 1), 1),
                 
-                # 【修正】xG字段名，和融合模型完全对齐
+                # xG字段名，和融合模型完全对齐
                 'away_xg_for_per_match': away_form.get('xg_for', 0) / max(away_form.get('matches_played', 1), 1),
                 'away_xg_against_per_match': away_form.get('xg_against', 0) / max(away_form.get('matches_played', 1), 1),
                 
-                # 【新增】射门准确率，适配融合模型
+                # 射门准确率，适配融合模型
                 'away_shooting_accuracy': away_form.get('shooting_accuracy', 0.35),
                 
                 # 攻防强度，和融合模型完全对齐
@@ -338,7 +355,7 @@ class FeatureEngineer:
                 'away_winning_streak': away_form.get('winning_streak', 0),
                 'away_unbeaten_streak': away_form.get('unbeaten_streak', 0),
                 
-                # 【修正】客场胜率计算，用实际客场场次
+                # 客场胜率计算，用实际客场场次
                 'away_away_win_rate': away_form.get('away_wins', 0) / max(away_form.get('away_matches_count', 1), 1),
                 
                 # 伤疲特征
@@ -471,8 +488,7 @@ class FeatureEngineer:
 def build_features_dataset(matches: List[Dict], historical_matches: List[Dict] = None) -> pd.DataFrame:
     """
     主管道调用入口，和之前的代码完全兼容
-    输入：API返回的比赛列表、历史比赛列表
-    输出：完整特征数据集DataFrame，直接喂给预测模型
+    【修复版】强制预处理历史数据，确保生成home_team_name/away_team_name字段
     """
     if historical_matches is None:
         historical_matches = []
@@ -485,19 +501,40 @@ def build_features_dataset(matches: List[Dict], historical_matches: List[Dict] =
 
     logger.info(f"开始为{len(matches)}场比赛构建高级特征")
 
-    # 预处理历史比赛数据，转为DataFrame，适配API结构
+    # 【核心修复】强制预处理历史比赛数据，确保生成必填字段
     historical_df = pd.DataFrame()
     if len(historical_matches) > 0:
         try:
             historical_df = pd.DataFrame(historical_matches)
-            # 统一历史数据字段名，和特征工程适配
+            # 强制生成home_team_name和away_team_name字段，不管原来的格式
             if 'homeTeam' in historical_df.columns:
-                historical_df['home_team_name'] = historical_df['homeTeam'].apply(lambda x: x.get('name', '') if isinstance(x, dict) else '')
+                historical_df['home_team_name'] = historical_df['homeTeam'].apply(
+                    lambda x: x.get('name', '') if isinstance(x, dict) else str(x)
+                )
+            else:
+                # 兜底，如果没有homeTeam字段，用home_team字段
+                historical_df['home_team_name'] = historical_df.get('home_team', historical_df.get('homeTeamName', ''))
+            
             if 'awayTeam' in historical_df.columns:
-                historical_df['away_team_name'] = historical_df['awayTeam'].apply(lambda x: x.get('name', '') if isinstance(x, dict) else '')
+                historical_df['away_team_name'] = historical_df['awayTeam'].apply(
+                    lambda x: x.get('name', '') if isinstance(x, dict) else str(x)
+                )
+            else:
+                historical_df['away_team_name'] = historical_df.get('away_team', historical_df.get('awayTeamName', ''))
+            
+            # 转换match_date字段
             if 'utcDate' in historical_df.columns:
                 historical_df['match_date'] = historical_df['utcDate'].apply(convert_utc_date)
-            logger.info(f"历史数据预处理完成，共{len(historical_df)}条记录")
+            else:
+                historical_df['match_date'] = historical_df.get('date', datetime.now(timezone.utc) - timedelta(days=365))
+            
+            # 过滤无效数据
+            historical_df = historical_df[
+                (historical_df['home_team_name'] != '') & 
+                (historical_df['away_team_name'] != '')
+            ].reset_index(drop=True)
+            
+            logger.info(f"✅ 历史数据预处理完成，共{len(historical_df)}条有效记录，已生成必填字段")
         except Exception as e:
             logger.warning(f"历史数据预处理失败：{e}，使用空历史数据")
             historical_df = pd.DataFrame()
@@ -505,7 +542,6 @@ def build_features_dataset(matches: List[Dict], historical_matches: List[Dict] =
     # 为每场比赛构建特征
     for match in matches:
         match_features = engineer.build_match_features(match, historical_df)
-        # 修复Pandas真值模糊报错，使用正确的非空判断
         if match_features is not None and not match_features.empty:
             feature_list.append(match_features)
             success_count += 1
