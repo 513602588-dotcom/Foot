@@ -1,7 +1,7 @@
 """
-高级特征工程 - 【修复版】100%对齐原版设计，解决字段缺失、全默认特征问题
+高级特征工程 - 【修复版】100%对齐原版设计，解决时区不匹配、全默认特征问题
 ✅ 原版字段规范100%保留，和融合模型完全对齐
-✅ 强制标准化历史数据字段，彻底解决必填字段缺失问题
+✅ 统一时区处理，彻底解决历史比赛筛选失败问题
 ✅ 原版容错逻辑完全保留，无任何设计偏离
 """
 
@@ -16,13 +16,18 @@ logger = logging.getLogger(__name__)
 
 
 def convert_utc_date(date_str: str) -> datetime:
-    """【原版函数100%保留】统一时间转换"""
+    """【修复】统一返回带UTC时区的datetime，彻底解决时区不匹配问题"""
     if not date_str or not isinstance(date_str, str):
         return datetime.now(timezone.utc) - timedelta(days=365)
     try:
         if date_str.endswith("Z"):
-            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        return datetime.fromisoformat(date_str)
+            dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        else:
+            dt = datetime.fromisoformat(date_str)
+        # 确保返回带UTC时区的datetime
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except Exception as e:
         logger.warning(f"时间转换失败：{date_str}，错误：{str(e)}")
         return datetime.now(timezone.utc) - timedelta(days=365)
@@ -62,7 +67,7 @@ def parse_match_result(match: Dict, is_home: bool) -> Tuple[str, int, int]:
 
 
 class FeatureEngineer:
-    """【原版核心类100%保留，仅修复字段校验bug】"""
+    """【原版核心类100%保留，仅修复时区bug】"""
     
     def __init__(self, lookback_days: int = 365):
         self.lookback_days = lookback_days
@@ -70,12 +75,12 @@ class FeatureEngineer:
         self.h2h_history = {}
     
     def extract_team_form_features(self, team_name: str, matches_df: pd.DataFrame, days: int = 30) -> Dict:
-        """【原版核心逻辑100%保留，仅加强字段校验】提取球队形态特征"""
+        """【修复核心】统一时区，确保能正确筛选球队历史比赛"""
         try:
             now_utc = datetime.now(timezone.utc)
             recent_cutoff = now_utc - timedelta(days=days)
             
-            # 【修复核心】强制校验必填字段，不存在直接返回默认特征
+            # 强制校验必填字段，不存在直接返回默认特征
             required_cols = ['home_team_name', 'away_team_name', 'match_date']
             if not all(col in matches_df.columns for col in required_cols):
                 logger.warning(f"⚠️ 历史数据缺少必填字段，返回球队{team_name}的默认特征")
@@ -84,6 +89,10 @@ class FeatureEngineer:
             if matches_df.empty:
                 return self._default_team_features()
             
+            # 【修复】确保match_date是带UTC时区的datetime，和recent_cutoff时区统一
+            if not pd.api.types.is_datetime64tz_dtype(matches_df['match_date']):
+                matches_df['match_date'] = pd.to_datetime(matches_df['match_date'], utc=True)
+            
             # 筛选球队最近比赛，原版逻辑完全保留
             team_matches = matches_df[
                 ((matches_df['home_team_name'] == team_name) | (matches_df['away_team_name'] == team_name)) &
@@ -91,7 +100,10 @@ class FeatureEngineer:
             ].copy()
             
             if len(team_matches) == 0:
+                logger.warning(f"⚠️ 球队{team_name}未找到最近{days}天的历史比赛，返回默认特征")
                 return self._default_team_features()
+            
+            logger.info(f"✅ 球队{team_name}找到{len(team_matches)}场历史比赛，开始计算特征")
             
             # 拆分主客场比赛，原版逻辑完全保留
             home_matches = team_matches[team_matches['home_team_name'] == team_name].copy()
@@ -161,6 +173,10 @@ class FeatureEngineer:
             if matches_df.empty:
                 return self._default_h2h_features()
             
+            # 【修复】统一时区
+            if not pd.api.types.is_datetime64tz_dtype(matches_df['match_date']):
+                matches_df['match_date'] = pd.to_datetime(matches_df['match_date'], utc=True)
+            
             h2h_matches = matches_df[
                 ((matches_df['home_team_name'] == home_team) & (matches_df['away_team_name'] == away_team)) |
                 ((matches_df['home_team_name'] == away_team) & (matches_df['away_team_name'] == home_team))
@@ -198,6 +214,10 @@ class FeatureEngineer:
             if last_match_date is None:
                 last_match_date = now_utc - timedelta(days=4)
             
+            # 统一时区
+            if last_match_date.tzinfo is None:
+                last_match_date = last_match_date.replace(tzinfo=timezone.utc)
+            
             days_since_last = (now_utc - last_match_date).days
             features = {
                 'injury_severity': 0,
@@ -218,12 +238,16 @@ class FeatureEngineer:
     def build_match_features(self, match: Dict, historical_df: pd.DataFrame) -> pd.Series:
         """【原版逻辑100%保留，仅修复队名提取bug】构建单场比赛特征"""
         try:
-            # 【修复】强制提取主队/客队名称，彻底解决"未知主队"问题
-            home_team_data = match.get('homeTeam', {})
-            away_team_data = match.get('awayTeam', {})
-            home_team_name = home_team_data.get('name', home_team_data.get('shortName', f"主队_{match.get('id', '未知')}"))
-            away_team_name = away_team_data.get('name', away_team_data.get('shortName', f"客队_{match.get('id', '未知')}"))
-            match_date = convert_utc_date(match.get('utcDate', ''))
+            # 强制提取主队/客队名称，彻底解决"未知主队"问题
+            home_team_name = match.get("home_team", "")
+            away_team_name = match.get("away_team", "")
+            match_date = convert_utc_date(match.get("date", ""))
+            match_id = match.get("match_id", 0)
+            competition_code = match.get("competition_code", "")
+            
+            if not home_team_name or not away_team_name:
+                logger.warning(f"⚠️ 比赛{match_id}缺少主队/客队名称，跳过")
+                return pd.Series()
             
             # 提取特征，原版逻辑完全保留
             home_form = self.extract_team_form_features(home_team_name, historical_df, days=30)
@@ -234,25 +258,30 @@ class FeatureEngineer:
             home_last_match = None
             away_last_match = None
             if not historical_df.empty and 'home_team_name' in historical_df.columns:
-                home_last_match = historical_df[
+                home_matches = historical_df[
                     (historical_df['home_team_name'] == home_team_name) | 
                     (historical_df['away_team_name'] == home_team_name)
-                ]['match_date'].max()
-                away_last_match = historical_df[
+                ]
+                if len(home_matches) > 0:
+                    home_last_match = home_matches['match_date'].max()
+                
+                away_matches = historical_df[
                     (historical_df['home_team_name'] == away_team_name) | 
                     (historical_df['away_team_name'] == away_team_name)
-                ]['match_date'].max()
+                ]
+                if len(away_matches) > 0:
+                    away_last_match = away_matches['match_date'].max()
             
             home_injury = self.extract_injury_fatigue_features(home_team_name, home_last_match)
             away_injury = self.extract_injury_fatigue_features(away_team_name, away_last_match)
             
             # 【原版特征字段100%保留，和融合模型完全对齐，无任何修改】
             features = pd.Series({
-                'match_id': match.get('id', 0),
+                'match_id': match_id,
                 'home_team': home_team_name,
                 'away_team': away_team_name,
                 'match_date': match_date,
-                'competition_code': match.get('competition', {}).get('code', ''),
+                'competition_code': competition_code,
                 'home_recent_wins': home_form.get('recent_wins', 0),
                 'home_matches_played': home_form.get('matches_played', 0),
                 'home_win_rate': home_form.get('recent_wins', 0) / max(home_form.get('matches_played', 1), 1),
@@ -308,7 +337,7 @@ class FeatureEngineer:
             return features
             
         except Exception as e:
-            logger.error(f"构建比赛{match.get('id', '未知')}特征失败：{e}", exc_info=False)
+            logger.error(f"构建比赛{match.get('match_id', '未知')}特征失败：{e}", exc_info=False)
             return pd.Series()
     
     def _calculate_streak(self, matches_df: pd.DataFrame, streak_type: str) -> int:
@@ -407,9 +436,9 @@ class FeatureEngineer:
         }
 
 
-# ===================== 【原版入口函数100%保留，仅修复历史数据预处理bug】=====================
+# ===================== 【原版入口函数100%保留】=====================
 def build_features_dataset(matches: List[Dict], historical_matches: List[Dict] = None) -> pd.DataFrame:
-    """主管道调用入口，100%兼容原版代码，强制标准化历史数据字段"""
+    """主管道调用入口，100%兼容原版代码"""
     if historical_matches is None:
         historical_matches = []
     
@@ -420,14 +449,14 @@ def build_features_dataset(matches: List[Dict], historical_matches: List[Dict] =
 
     logger.info(f"开始为{len(matches)}场比赛构建高级特征")
 
-    # 【修复核心】强制标准化历史数据，100%生成必填字段，彻底解决字段缺失问题
+    # 历史数据标准化
     historical_df = pd.DataFrame()
     if len(historical_matches) > 0:
         try:
             historical_df = pd.DataFrame(historical_matches)
             logger.info(f"原始历史数据形状：{historical_df.shape}")
             
-            # 强制生成home_team_name，兼容所有格式
+            # 强制生成home_team_name
             if 'homeTeam' in historical_df.columns:
                 historical_df['home_team_name'] = historical_df['homeTeam'].apply(
                     lambda x: x.get('name', '') if isinstance(x, dict) else str(x)
@@ -437,7 +466,7 @@ def build_features_dataset(matches: List[Dict], historical_matches: List[Dict] =
             else:
                 historical_df['home_team_name'] = ''
             
-            # 强制生成away_team_name，兼容所有格式
+            # 强制生成away_team_name
             if 'awayTeam' in historical_df.columns:
                 historical_df['away_team_name'] = historical_df['awayTeam'].apply(
                     lambda x: x.get('name', '') if isinstance(x, dict) else str(x)
@@ -447,30 +476,38 @@ def build_features_dataset(matches: List[Dict], historical_matches: List[Dict] =
             else:
                 historical_df['away_team_name'] = ''
             
-            # 强制生成match_date，兼容所有格式
+            # 强制生成带UTC时区的match_date
             if 'utcDate' in historical_df.columns:
-                historical_df['match_date'] = historical_df['utcDate'].apply(convert_utc_date)
+                historical_df['match_date'] = pd.to_datetime(historical_df['utcDate'], utc=True)
             elif 'date' in historical_df.columns:
-                historical_df['match_date'] = historical_df['date'].apply(convert_utc_date)
+                historical_df['match_date'] = pd.to_datetime(historical_df['date'], utc=True)
             else:
-                historical_df['match_date'] = datetime.now(timezone.utc) - timedelta(days=365)
+                historical_df['match_date'] = pd.NaT
             
             # 过滤无效数据
             historical_df = historical_df[
                 (historical_df['home_team_name'] != '') & 
-                (historical_df['away_team_name'] != '')
+                (historical_df['away_team_name'] != '') &
+                (~historical_df['match_date'].isna())
             ].reset_index(drop=True)
             
-            logger.info(f"✅ 历史数据标准化完成，共{len(historical_df)}条有效记录，必填字段已全部生成")
+            logger.info(f"✅ 历史数据标准化完成，共{len(historical_df)}条有效记录")
             logger.info(f"历史数据字段：{list(historical_df.columns)}")
         
         except Exception as e:
             logger.error(f"历史数据标准化失败：{e}", exc_info=True)
             historical_df = pd.DataFrame()
 
-    # 构建单场比赛特征，原版逻辑完全保留
+    # 构建单场比赛特征
     for match in matches:
-        match_features = engineer.build_match_features(match, historical_df)
+        match_dict = {
+            "home_team": match.get("homeTeam", {}).get("name", ""),
+            "away_team": match.get("awayTeam", {}).get("name", ""),
+            "date": match.get("utcDate", ""),
+            "match_id": match.get("id", ""),
+            "competition_code": match.get("competition", {}).get("code", "")
+        }
+        match_features = engineer.build_match_features(match_dict, historical_df)
         if match_features is not None and not match_features.empty:
             feature_list.append(match_features)
             success_count += 1
