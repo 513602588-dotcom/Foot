@@ -1,7 +1,7 @@
 """
 完整的足球预测管道
 从数据收集 -> 特征工程 -> 模型训练 -> 预测生成 -> 结果导出
-修复：除以零报错、环境变量密钥读取、空数据兜底、异常容错
+修复：除以零报错、环境变量密钥读取、空数据兜底、异常容错、create_data_aggregator参数匹配报错
 """
 
 import pandas as pd
@@ -14,7 +14,7 @@ from typing import Dict, List, Tuple
 import os
 
 # 导入本地模块
-from src.data.api_integrations import create_data_aggregator
+from src.data.api_integrations import create_data_aggregator, validate_and_get_api_keys
 from src.collect.utils import now_cn_date
 from src.data.feature_engineering import FeatureEngineer
 from src.data.data_collector_enhanced import (
@@ -31,9 +31,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 从环境变量读取密钥，和api_integrations.py保持一致
+# ==================== 修复1：补全3组密钥读取，和api_integrations.py完全对齐 ====================
+# 从环境变量读取所有密钥，和日志验证的3组密钥完全匹配
 ENV_CONFIG = {
     "API_FOOTBALL_KEY": os.getenv("API_FOOTBALL_KEY", ""),
+    "FOOTBALL_DATA_KEY": os.getenv("FOOTBALL_DATA_KEY", ""),
     "ODDS_API_KEY": os.getenv("ODDS_API_KEY", "")
 }
 
@@ -43,6 +45,7 @@ class FootballPredictionPipeline:
     def __init__(
         self,
         football_api_key: str = None,
+        football_data_key: str = None,  # 修复2：补全缺失的football_data_key参数
         odds_api_key: str = None,
         db_path: str = "data/football.db"
     ):
@@ -50,18 +53,33 @@ class FootballPredictionPipeline:
         初始化管道
         
         Args:
-            football_api_key: football-data.org API密钥
-            odds_api_key: The Odds API密钥
+            football_api_key: api-sports.io API密钥（对应API_FOOTBALL_KEY）
+            football_data_key: football-data.org API密钥（对应FOOTBALL_DATA_KEY）
+            odds_api_key: The Odds API密钥（对应ODDS_API_KEY）
             db_path: 数据库路径
         """
-        # 优先使用传入的密钥，兜底用环境变量，确保密钥正确传递
+        # 优先使用传入的密钥，兜底用环境变量，和api_integrations逻辑完全一致
         self.football_api_key = football_api_key if football_api_key else ENV_CONFIG["API_FOOTBALL_KEY"]
+        self.football_data_key = football_data_key if football_data_key else ENV_CONFIG["FOOTBALL_DATA_KEY"]
         self.odds_api_key = odds_api_key if odds_api_key else ENV_CONFIG["ODDS_API_KEY"]
         
-        self.data_aggregator = create_data_aggregator(
-            football_api_key=self.football_api_key,
-            odds_api_key=self.odds_api_key
-        )
+        # ==================== 核心修复3：彻底解决参数不匹配报错 ====================
+        # 调用参数名、数量和api_integrations.py里的函数定义100%匹配，无多余/缺失参数
+        try:
+            self.data_aggregator = create_data_aggregator(
+                football_api_key=self.football_api_key,
+                football_data_key=self.football_data_key,
+                odds_api_key=self.odds_api_key
+            )
+            logger.info("✅ 数据聚合器初始化成功，API密钥参数匹配正常")
+        except TypeError as e:
+            logger.critical(f"❌ 数据聚合器初始化失败（参数不匹配）：{e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.critical(f"❌ 数据聚合器初始化失败：{e}", exc_info=True)
+            raise
+
+        # 其他组件初始化，保留原有逻辑
         self.data_collector = DataCollector(db_path)
         self.feature_engineer = FeatureEngineer()
         self.meta_learner = MetaLearner()
@@ -74,8 +92,10 @@ class FootballPredictionPipeline:
         self.predictions = None
         
         logger.info("Pipeline initialized successfully")
-        logger.info(f"Football API 密钥状态：{'已配置' if self.football_api_key else '未配置'}")
-        logger.info(f"Odds API 密钥状态：{'已配置' if self.odds_api_key else '未配置'}")
+        # 密钥状态日志，和api_integrations验证结果对齐
+        logger.info(f"API_FOOTBALL_KEY 状态：{'已配置' if self.football_api_key else '未配置'}")
+        logger.info(f"FOOTBALL_DATA_KEY 状态：{'已配置' if self.football_data_key else '未配置'}")
+        logger.info(f"ODDS_API_KEY 状态：{'已配置' if self.odds_api_key else '未配置'}")
     
     def stage_0_scrape_external_data(self) -> None:
         """阶段0：运行所有外部爬虫，更新site/data目录。
@@ -88,12 +108,11 @@ class FootballPredictionPipeline:
             # 抓取最新1天500网数据
             export_500(days=1)
             # 抓取最近3天澳客数据作为示例
-            # 注意：export_okooo 接受 start_date, days, version
             today = now_cn_date()
             export_okooo(start_date=today, days=3, version="full")
             logger.info("✅ External scrapers completed")
         except Exception as e:
-            logger.warning(f"External scrapers failed: {e}")
+            logger.warning(f"External scrapers failed: {e}", exc_info=True)
 
     def stage_1_collect_data(self, competitions: List[str] = None) -> pd.DataFrame:
         """
@@ -113,46 +132,55 @@ class FootballPredictionPipeline:
         
         for comp in competitions:
             logger.info(f"  Fetching matches for {comp}...")
-            
-            # 检查缓存
-            cached = self.cache.get(f"matches_{comp}")
-            if cached:
-                logger.info(f"  Using cached data for {comp}")
-                all_matches.extend(cached)
-            else:
+            try:
+                # 检查缓存
+                cached = self.cache.get(f"matches_{comp}")
+                if cached:
+                    logger.info(f"  Using cached data for {comp}")
+                    all_matches.extend(cached)
+                    continue
+                
+                # API拉取数据，增加异常捕获，单联赛失败不影响整体
                 matches = self.data_aggregator.fdb.get_matches(comp)
-                if matches:
+                if matches and len(matches) > 0:
                     self.cache.set(f"matches_{comp}", matches)
                     all_matches.extend(matches)
+                    logger.info(f"  Successfully fetched {len(matches)} matches for {comp}")
                 else:
                     logger.warning(f"  No matches found for {comp}")
+            except Exception as e:
+                logger.error(f"  Failed to fetch matches for {comp}: {e}", exc_info=True)
+                continue
         
         # 空数据兜底，避免转换DataFrame时报错
-        if not all_matches:
+        if not all_matches or len(all_matches) == 0:
             logger.warning("❌ No matches collected from all competitions")
             return pd.DataFrame()
         
-        # 转换为DataFrame
+        # 转换为DataFrame，增加字段兜底
         matches_df = pd.DataFrame([
             {
-                'id': m.get('id'),
-                'date': m.get('utcDate', m.get('date')),
-                'league': m.get('competition', {}).get('code'),
-                'home_team': m.get('homeTeam', {}).get('name'),
-                'away_team': m.get('awayTeam', {}).get('name'),
-                'status': m.get('status'),
-                'home_goals': m.get('score', {}).get('fullTime', {}).get('home'),
-                'away_goals': m.get('score', {}).get('fullTime', {}).get('away'),
+                'id': m.get('id', ''),
+                'date': m.get('utcDate', m.get('date', datetime.now().isoformat())),
+                'league': m.get('competition', {}).get('code', comp),
+                'home_team': m.get('homeTeam', {}).get('name', '未知主队'),
+                'away_team': m.get('awayTeam', {}).get('name', '未知客队'),
+                'status': m.get('status', 'SCHEDULED'),
+                'home_goals': m.get('score', {}).get('fullTime', {}).get('home', np.nan),
+                'away_goals': m.get('score', {}).get('fullTime', {}).get('away', np.nan),
             }
             for m in all_matches
         ])
         
-        logger.info(f"✅ Collected {len(matches_df)} matches")
+        logger.info(f"✅ Collected {len(matches_df)} valid matches")
         self.historical_data = matches_df
         
-        # 保存到数据库
-        for _, match in matches_df.iterrows():
-            self.data_collector.save_match(match.to_dict())
+        # 保存到数据库，增加异常捕获
+        try:
+            for _, match in matches_df.iterrows():
+                self.data_collector.save_match(match.to_dict())
+        except Exception as e:
+            logger.warning(f"Failed to save matches to database: {e}", exc_info=True)
         
         return matches_df
     
@@ -170,15 +198,18 @@ class FootballPredictionPipeline:
             
             if len(df) > 0:
                 logger.info(f"✅ Loaded {len(df)} historical records")
-                self.historical_data = df
+                # 合并历史数据，避免覆盖新采集的比赛数据
+                if self.historical_data is not None and not self.historical_data.empty:
+                    self.historical_data = pd.concat([self.historical_data, df], ignore_index=True).drop_duplicates(subset=['id'])
+                else:
+                    self.historical_data = df
                 return df
             else:
-                logger.warning("⚠️ No historical data found, using web scraping...")
-                # 可选：从Web爬虫获取数据
+                logger.warning("⚠️ No historical data found in picks file")
                 return pd.DataFrame()
                 
         except Exception as e:
-            logger.error(f"❌ Error loading historical data: {e}")
+            logger.error(f"❌ Error loading historical data: {e}", exc_info=True)
             return pd.DataFrame()
     
     def stage_3_feature_engineering(self, matches_df: pd.DataFrame) -> pd.DataFrame:
@@ -198,29 +229,37 @@ class FootballPredictionPipeline:
             logger.warning("❌ No matches available for feature engineering")
             return pd.DataFrame()
         
+        # 历史数据兜底，避免传入None导致特征工程报错
+        historical_df = self.historical_data if self.historical_data is not None and not self.historical_data.empty else matches_df
+        
         features_list = []
         
         for idx, match in matches_df.iterrows():
             try:
                 features = self.feature_engineer.build_match_features(
                     match.to_dict(),
-                    self.historical_data if self.historical_data is not None else matches_df
+                    historical_df
                 )
                 
-                if len(features) > 0:
+                if features and len(features) > 0:
+                    # 补充比赛ID，方便后续关联
+                    features['match_id'] = match.get('id', f'unknown_{idx}')
                     features_list.append(features)
                     
             except Exception as e:
-                logger.error(f"Error extracting features for match {idx}: {e}")
+                logger.error(f"Error extracting features for match {idx} (id:{match.get('id')}): {e}", exc_info=True)
                 continue
         
         # 空特征兜底
-        if not features_list:
+        if not features_list or len(features_list) == 0:
             logger.warning("❌ No features extracted from matches")
             return pd.DataFrame()
         
         features_df = pd.DataFrame(features_list)
-        logger.info(f"✅ Extracted features for {len(features_df)} matches")
+        # 缺失值填充，避免模型预测报错
+        features_df = features_df.replace([np.inf, -np.inf], np.nan).fillna(0)
+        
+        logger.info(f"✅ Extracted valid features for {len(features_df)} matches")
         logger.info(f"   Features shape: {features_df.shape}")
         
         self.features = features_df
@@ -241,13 +280,33 @@ class FootballPredictionPipeline:
             return None
         
         try:
-            # 创建虚拟标签用于演示（实际应使用真实比赛结果）
-            np.random.seed(42)
-            y = np.random.choice(['win', 'draw', 'loss'], size=len(features_df), p=[0.46, 0.27, 0.27])
+            # 标签生成：使用真实比赛结果，无结果时跳过训练
+            if 'home_goals' not in matches_df.columns or 'away_goals' not in matches_df.columns:
+                logger.warning("⚠️ No match result data available for training, skipping")
+                return None
+            
+            # 生成真实标签，过滤无结果的比赛
+            valid_matches = matches_df.dropna(subset=['home_goals', 'away_goals'])
+            if len(valid_matches) < 100:
+                logger.warning("⚠️ Insufficient valid match results for training, skipping")
+                return None
+            
+            # 生成标签：主队胜=win，平=draw，客队胜=loss
+            y = []
+            for _, row in valid_matches.iterrows():
+                if row['home_goals'] > row['away_goals']:
+                    y.append('win')
+                elif row['home_goals'] == row['away_goals']:
+                    y.append('draw')
+                else:
+                    y.append('loss')
             y_series = pd.Series(y)
             
-            logger.info("   Training XGBoost ensemble...")
-            self.meta_learner.train_all_models(features_df, y_series)
+            # 对齐特征和标签
+            train_features = features_df.iloc[valid_matches.index]
+            
+            logger.info(f"   Training XGBoost ensemble with {len(train_features)} valid samples...")
+            self.meta_learner.train_all_models(train_features, y_series)
             
             logger.info("✅ All models trained successfully")
             self.fusion_model.load_meta_learner(self.meta_learner)
@@ -255,7 +314,7 @@ class FootballPredictionPipeline:
             return self.meta_learner
             
         except Exception as e:
-            logger.error(f"❌ Error training models: {e}")
+            logger.error(f"❌ Error training models: {e}", exc_info=True)
             logger.info("   Continuing without ML models...")
             return None
     
@@ -282,29 +341,41 @@ class FootballPredictionPipeline:
             return []
         
         predictions = []
+        # 对齐比赛和特征，确保一一对应
+        match_feature_map = {row['match_id']: row for _, row in features_df.iterrows()}
         
         for idx, (_, match) in enumerate(matches_df.iterrows()):
             try:
-                if idx < len(features_df):
-                    features = features_df.iloc[idx]
+                match_id = match.get('id', f'unknown_{idx}')
+                # 跳过无对应特征的比赛
+                if match_id not in match_feature_map:
+                    logger.warning(f"   No features found for match {match_id}, skipping")
+                    continue
+                
+                features = match_feature_map[match_id]
+                # 融合模型预测
+                prediction = self.fusion_model.predict_single_match(
+                    match.to_dict(),
+                    features
+                )
+                # 补充比赛基础信息，方便后续使用
+                prediction['match_id'] = match_id
+                prediction['home_team'] = match.get('home_team', '未知主队')
+                prediction['away_team'] = match.get('away_team', '未知客队')
+                prediction['league'] = match.get('league', '未知联赛')
+                prediction['match_date'] = match.get('date', datetime.now().isoformat())
+                
+                predictions.append(prediction)
+                
+                # 每10个打印进度
+                if (idx + 1) % 10 == 0:
+                    logger.info(f"   Processed {idx + 1}/{len(matches_df)} matches")
                     
-                    # 融合模型预测
-                    prediction = self.fusion_model.predict_single_match(
-                        match.to_dict(),
-                        features
-                    )
-                    
-                    predictions.append(prediction)
-                    
-                    # 每10个打印进度
-                    if (idx + 1) % 10 == 0:
-                        logger.info(f"   Processed {idx + 1}/{len(matches_df)} matches")
-                        
             except Exception as e:
-                logger.error(f"Error predicting match {idx}: {e}")
+                logger.error(f"Error predicting match {idx} (id:{match.get('id')}): {e}", exc_info=True)
                 continue
         
-        logger.info(f"✅ Generated predictions for {len(predictions)} matches")
+        logger.info(f"✅ Generated valid predictions for {len(predictions)} matches")
         self.predictions = predictions
         
         return predictions
@@ -315,7 +386,7 @@ class FootballPredictionPipeline:
         
         Args:
             predictions: 预测列表
-            min_ev: 最小EV阈值
+            min_ev: 最小EV阈值（小数，0.05=5%）
         
         Returns:
             筛选后的推荐列表
@@ -323,29 +394,31 @@ class FootballPredictionPipeline:
         logger.info("🏆 Stage 6: Filtering Top Picks")
         
         # 空数据兜底
-        if not predictions:
+        if not predictions or len(predictions) == 0:
             logger.warning("❌ No predictions available for filtering")
             return []
         
         top_picks = []
+        min_ev_percent = min_ev * 100  # 转换为百分比，和预测结果中的EV单位对齐
         
         for pred in predictions:
             try:
                 ev = pred.get('expected_value', 0)
                 confidence = pred.get('confidence', 0)
                 
-                # 筛选条件：EV > min_ev 且置信度 > 50%
-                if ev > min_ev * 100 and confidence >= 50:
+                # 筛选条件：EV > 阈值 且置信度 > 50%，增加空值兜底
+                if ev > min_ev_percent and confidence >= 50 and confidence <= 100:
                     top_picks.append(pred)
                     
             except Exception as e:
-                logger.warning(f"Error filtering prediction: {e}")
+                logger.warning(f"Error filtering prediction: {e}", exc_info=True)
                 continue
         
-        # 按EV排序
-        top_picks.sort(key=lambda x: x.get('expected_value', 0), reverse=True)
+        # 按EV降序排序
+        if len(top_picks) > 0:
+            top_picks.sort(key=lambda x: x.get('expected_value', 0), reverse=True)
         
-        logger.info(f"✅ Found {len(top_picks)} top picks (EV > {min_ev*100}%)")
+        logger.info(f"✅ Found {len(top_picks)} top picks (EV > {min_ev_percent}%)")
         
         return top_picks
     
@@ -368,6 +441,7 @@ class FootballPredictionPipeline:
         """
         logger.info("💾 Stage 7: Exporting Results")
         
+        # 创建输出目录，不存在则自动创建
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         try:
@@ -395,19 +469,27 @@ class FootballPredictionPipeline:
             return predictions_path, picks_path
             
         except Exception as e:
-            logger.error(f"❌ Error exporting results: {e}")
+            logger.error(f"❌ Error exporting results: {e}", exc_info=True)
             return None, None
     
     def _generate_stats_report(self, all_preds, top_picks) -> Dict:
-        """生成统计报告"""
+        """生成统计报告，彻底修复除以零、空列表计算警告"""
+        # 预计算所有指标的列表，增加空值兜底
+        all_confidence = [p.get('confidence', 0) for p in all_preds if p.get('confidence') is not None]
+        all_win_prob = [p.get('final_prediction', {}).get('win_prob', 0) for p in all_preds if p.get('final_prediction') is not None]
+        top_ev = [p.get('expected_value', 0) for p in top_picks if p.get('expected_value') is not None]
+        all_ev = [p.get('expected_value', 0) for p in all_preds if p.get('expected_value') is not None]
+        
         report = {
             'timestamp': datetime.now().isoformat(),
             'total_predictions': len(all_preds),
             'top_picks_count': len(top_picks),
-            'avg_confidence': np.mean([p.get('confidence', 0) for p in all_preds]) if all_preds else 0,
-            'avg_win_probability': np.mean([p.get('final_prediction', {}).get('win_prob', 0) for p in all_preds]) if all_preds else 0,
-            'avg_expected_value': np.mean([p.get('expected_value', 0) for p in top_picks]) if top_picks else 0,
-            'max_expected_value': max([p.get('expected_value', 0) for p in all_preds], default=0),
+            # 修复：空列表时返回0，避免np.mean空列表警告
+            'avg_confidence': np.mean(all_confidence) if len(all_confidence) > 0 else 0,
+            'avg_win_probability': np.mean(all_win_prob) if len(all_win_prob) > 0 else 0,
+            'avg_expected_value': np.mean(top_ev) if len(top_ev) > 0 else 0,
+            'max_expected_value': max(all_ev, default=0),
+            'top_picks_ratio': round((len(top_picks)/len(all_preds))*100, 2) if len(all_preds) > 0 else 0,
             'model_weights': {
                 'poisson': '20%',
                 'xgboost': '25%',
@@ -431,15 +513,18 @@ class FootballPredictionPipeline:
         run_scrapers: bool = False,
         stage_load_historical: bool = True,
         stage_train_models: bool = False,
-        competitions: List[str] = None
+        competitions: List[str] = None,
+        min_ev_threshold: float = 0.05
     ) -> Dict:
         """
         运行完整管道
         
         Args:
+            run_scrapers: 是否先运行500网/澳客爬虫刷新数据
             stage_load_historical: 是否加载历史数据
             stage_train_models: 是否训练ML模型
             competitions: 联赛列表
+            min_ev_threshold: 顶级推荐最小EV阈值（小数）
         
         Returns:
             包含所有结果的字典
@@ -451,7 +536,9 @@ class FootballPredictionPipeline:
         results = {
             'timestamp': datetime.now().isoformat(),
             'status': 'running',
-            'stages_completed': []
+            'stages_completed': [],
+            'error': None,
+            'warning': None
         }
         
         try:
@@ -465,12 +552,13 @@ class FootballPredictionPipeline:
             results['stages_completed'].append('data_collection')
             results['matches_count'] = len(matches_df)
             
-            # 【核心兜底】0场比赛时，提前终止，避免后续报错
+            # 核心兜底：0场比赛时，提前终止，避免后续报错
             if matches_df.empty:
-                logger.error("❌ Pipeline terminated: No matches collected from API")
+                error_msg = 'No matches collected from API, please check API key validity, network connection and request quota'
+                logger.error(f"❌ Pipeline terminated: {error_msg}")
                 results['status'] = 'completed_with_warning'
-                results['warning'] = 'No matches collected from API, please check API key and request status'
-                results['duration_minutes'] = (datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60
+                results['warning'] = error_msg
+                results['duration_minutes'] = round((datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60, 2)
                 return results
             
             # Stage 2: 加载历史数据 (可选)
@@ -485,10 +573,11 @@ class FootballPredictionPipeline:
             
             # 特征为空兜底
             if features_df.empty:
-                logger.error("❌ Pipeline terminated: No features extracted from matches")
+                error_msg = 'No valid features extracted from matches'
+                logger.error(f"❌ Pipeline terminated: {error_msg}")
                 results['status'] = 'completed_with_warning'
-                results['warning'] = 'No features extracted from matches'
-                results['duration_minutes'] = (datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60
+                results['warning'] = error_msg
+                results['duration_minutes'] = round((datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60, 2)
                 return results
             
             # Stage 4: 训练模型 (可选)
@@ -503,63 +592,73 @@ class FootballPredictionPipeline:
             
             # 预测为空兜底
             if not all_predictions:
-                logger.error("❌ Pipeline terminated: No predictions generated")
+                error_msg = 'No valid predictions generated from matches'
+                logger.error(f"❌ Pipeline terminated: {error_msg}")
                 results['status'] = 'completed_with_warning'
-                results['warning'] = 'No predictions generated from matches'
-                results['duration_minutes'] = (datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60
+                results['warning'] = error_msg
+                results['duration_minutes'] = round((datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60, 2)
                 return results
             
             # Stage 6: 筛选顶级推荐
-            top_picks = self.stage_6_filter_top_picks(all_predictions)
+            top_picks = self.stage_6_filter_top_picks(all_predictions, min_ev=min_ev_threshold)
             results['stages_completed'].append('filtering_top_picks')
             results['top_picks_count'] = len(top_picks)
             
             # Stage 7: 导出结果
-            self.stage_7_export_results(all_predictions, top_picks)
+            pred_path, picks_path = self.stage_7_export_results(all_predictions, top_picks)
             results['stages_completed'].append('result_export')
+            results['predictions_file_path'] = pred_path
+            results['top_picks_file_path'] = picks_path
             
+            # 最终状态更新
             results['status'] = 'completed'
-            results['duration_minutes'] = (datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60
+            results['duration_minutes'] = round((datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60, 2)
             
             logger.info("=" * 60)
             logger.info("✅ PIPELINE COMPLETED SUCCESSFULLY")
             logger.info("=" * 60)
-            logger.info(f"📊 Results Summary:")
-            logger.info(f"   - Total predictions: {results['predictions_count']}")
-            logger.info(f"   - Top picks: {results['top_picks_count']}")
-            
-            # 【致命修复】彻底解决除以零报错
-            top_total_ratio = 0.0
+            logger.info(f"📊 Final Results Summary:")
+            logger.info(f"   - Total matches processed: {results['matches_count']}")
+            logger.info(f"   - Total valid predictions: {results['predictions_count']}")
+            logger.info(f"   - Top value picks: {results['top_picks_count']}")
+            # 修复：彻底解决除以零报错
             if results['predictions_count'] > 0:
-                top_total_ratio = results['top_picks_count'] / results['predictions_count'] * 100
-            logger.info(f"   - Top/Total ratio: {top_total_ratio:.1f}%")
+                top_ratio = round((results['top_picks_count'] / results['predictions_count']) * 100, 1)
+                logger.info(f"   - Top picks ratio: {top_ratio}%")
             
         except Exception as e:
-            logger.error(f"❌ Pipeline failed: {e}")
+            error_msg = str(e)
+            logger.error(f"❌ Pipeline failed: {error_msg}", exc_info=True)
             results['status'] = 'failed'
-            results['error'] = str(e)
+            results['error'] = error_msg
+            results['duration_minutes'] = round((datetime.now() - datetime.fromisoformat(results['timestamp'])).total_seconds() / 60, 2)
         
         return results
 
 
 # 主执行函数
 def main():
-    """主函数"""
+    """主函数，启动完整预测管道"""
     
     # 初始化管道，自动读取环境变量密钥，无需手动填写
+    # 启动前先执行密钥验证，和api_integrations.py对齐
+    logger.info("=== 启动前密钥验证 ===")
+    validate_and_get_api_keys()
+    
     pipeline = FootballPredictionPipeline()
     
-    # 运行完整管道
+    # 运行完整管道，可根据需求修改参数
     results = pipeline.run_full_pipeline(
-        run_scrapers=True,            # 先刷新爬虫数据
-        stage_load_historical=True,   # 使用历史数据提高特征质量
-        stage_train_models=False,     # 如果有足够数据可设置为True
-        competitions=['PL', 'SA', 'BL1']  # 主要联赛
+        run_scrapers=True,            # 先刷新500网/澳客爬虫数据
+        stage_load_historical=True,   # 加载历史数据提升特征质量
+        stage_train_models=False,     # 有≥100场历史结果数据时可设为True
+        competitions=['PL', 'SA', 'BL1', 'FR1', 'IT1', 'JCZQ'],  # 目标联赛列表
+        min_ev_threshold=0.05         # 仅保留EV≥5%的推荐
     )
     
-    # 输出结果
+    # 输出最终执行报告
     print("\n" + "=" * 60)
-    print("PIPELINE EXECUTION REPORT")
+    print("PIPELINE FINAL EXECUTION REPORT")
     print("=" * 60)
     print(json.dumps(results, indent=2, ensure_ascii=False))
     print("=" * 60)
