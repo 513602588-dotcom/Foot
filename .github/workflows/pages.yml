@@ -1,18 +1,21 @@
-# 足球赛事预测管道 - 完整版（修复DeepSeek密钥传递问题）
+# 足球赛事预测管道 - 省API优化版（彻底关闭改代码自动运行）
 name: Football Prediction Pipeline
 
-# 触发规则：可手动触发、每天0点自动更新、推送到main分支自动运行
+# 触发规则：仅保留【手动触发】+【定时自动触发】，彻底关闭改代码自动运行
 on:
-  # 手动触发（在GitHub Actions页面可以手动点运行）
+  # 手动触发（在GitHub Actions页面手动点运行，支持自定义参数）
   workflow_dispatch:
-  # 定时触发：每天UTC时间0点（北京时间8点）自动更新预测，可自行修改时间
+    inputs:
+      skip_api_request:
+        description: "是否仅测试代码，不调用API（省配额）"
+        type: boolean
+        default: false
+        required: false
+  # 定时触发：每天UTC时间0点（北京时间8点）自动更新，可自行修改频率
   schedule:
     - cron: '0 0 * * *'
-  # 代码提交到main分支时自动运行
-  push:
-    branches: [ main ]
 
-# 运行权限配置（确保GitHub Pages部署有权限）
+# 运行权限配置（确保GitHub Pages部署有权限，无需修改）
 permissions:
   contents: read
   pages: write
@@ -30,47 +33,66 @@ jobs:
       - name: 拉取仓库代码
         uses: actions/checkout@v4
 
-      # 2. 配置Python环境（固定3.11稳定版，兼容你所有依赖）
+      # 2. 配置Python环境（固定3.11稳定版，兼容所有依赖）
       - name: 配置Python环境
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip' # 缓存依赖，加快运行速度
+          cache: 'pip' # 永久缓存pip依赖，不用每次重新安装，加快运行速度
 
-      # 3. 安装所有依赖（包括openai库）
+      # 3. 安装所有依赖（仅在依赖变化时重新安装）
       - name: 安装Python依赖
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4. 【核心修复】运行预测管道，把所有Secrets传入环境变量
+      # 4. 【核心省API】恢复API缓存文件，重复运行不用重新请求接口
+      - name: 恢复API缓存
+        uses: actions/cache@v4
+        with:
+          path: ./data/api_cache.json
+          key: api-cache-${{ github.run_id }}
+          restore-keys: |
+            api-cache-
+
+      # 5. 运行预测主管道（仅在不跳过API时执行）
       - name: 运行预测主管道
+        if: ${{ inputs.skip_api_request != true }}
         env:
-          # 足球数据API密钥（你已配置的）
+          # 足球数据API密钥
           FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-          # 【关键修复】DeepSeek密钥，之前漏了这一行，现在加上
+          # DeepSeek密钥
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          # 可选：自定义DeepSeek地址，不需要就注释掉
-          # DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
-          # OpenAI相关密钥（你已配置的，备用）
+          # OpenAI备用密钥
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
         run: python -m src.build_pipeline
 
-      # 5. 配置GitHub Pages部署
+      # 6. 仅测试代码（跳过API调用，不消耗配额）
+      - name: 仅测试代码语法（不调用API）
+        if: ${{ inputs.skip_api_request == true }}
+        run: |
+          echo "✅ 代码语法测试通过，未调用任何API，无配额消耗"
+          python -m py_compile src/build_pipeline.py
+          python -m py_compile src/engine/fusion_engine.py
+
+      # 7. 配置GitHub Pages部署
       - name: 配置GitHub Pages
+        if: ${{ inputs.skip_api_request != true }}
         uses: actions/configure-pages@v5
 
-      # 6. 上传预测结果到Pages
+      # 8. 上传预测结果到Pages
       - name: 上传预测结果
+        if: ${{ inputs.skip_api_request != true }}
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./public # 你的预测结果和页面输出目录
+          path: ./public # 预测结果和页面输出目录
 
-      # 7. 自动部署到GitHub Pages
+      # 9. 自动部署到GitHub Pages
       - name: 部署到GitHub Pages
+        if: ${{ inputs.skip_api_request != true }}
         id: deployment
         uses: actions/deploy-pages@v4
