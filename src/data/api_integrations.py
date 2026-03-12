@@ -1,7 +1,6 @@
 """
 多源足球数据API集成
-集成football-data.org, understat, the-odds-api, sofascore等数据源
-修复：环境变量读取、API参数格式、接口地址、异常日志、模拟数据格式问题
+修复：API中文参数错误、400请求失败、除以零兜底、参数规范
 """
 import requests
 import json
@@ -10,15 +9,14 @@ from datetime import datetime, timedelta
 import logging
 import os
 
-# 配置日志，输出更详细的请求信息
+# 日志配置
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# ====================== 核心修复1：全局环境变量读取 ======================
-# 直接从系统环境变量读取工作流传入的密钥，无需手动传参
+# 环境变量读取
 ENV_CONFIG = {
     "API_FOOTBALL_KEY": os.getenv("API_FOOTBALL_KEY", ""),
     "FOOTBALL_DATA_KEY": os.getenv("FOOTBALL_DATA_KEY", ""),
@@ -28,7 +26,7 @@ ENV_CONFIG = {
     "OPENAI_MODEL": os.getenv("OPENAI_MODEL", "")
 }
 
-# 启动时打印密钥读取状态（仅输出长度，不泄露明文）
+# 启动密钥状态校验
 logger.info("=== 环境变量密钥读取状态 ===")
 for key, value in ENV_CONFIG.items():
     if "KEY" in key or "SECRET" in key:
@@ -37,11 +35,10 @@ logger.info("=============================")
 
 
 class FootballDataAPI:
-    """football-data.org 官方API（修复日期格式、日志、异常处理）"""
+    """football-data.org 官方API（修复中文参数，完全符合官方规范）"""
     BASE_URL = "https://api.football-data.org/v4"
     
     def __init__(self, api_key: str = None):
-        # 优先使用传入的密钥，兜底用环境变量
         self.api_key = api_key if api_key else ENV_CONFIG["API_FOOTBALL_KEY"]
         self.headers = {"X-Auth-Token": self.api_key} if self.api_key else {}
         logger.info(f"FootballDataAPI 初始化完成，密钥状态：{'已配置' if self.api_key else '未配置'}")
@@ -52,7 +49,6 @@ class FootballDataAPI:
             logger.warning("FootballDataAPI 无密钥，跳过请求")
             return []
         try:
-            logger.info(f"请求联赛列表：{self.BASE_URL}/competitions")
             resp = requests.get(f"{self.BASE_URL}/competitions", headers=self.headers, timeout=10)
             resp.raise_for_status()
             logger.info(f"联赛列表请求成功，共 {len(resp.json().get('competitions', []))} 个联赛")
@@ -63,17 +59,16 @@ class FootballDataAPI:
     
     def get_matches(self, competition_code: str = "PL", status: str = "SCHEDULED", days: int = 7):
         """
-        获取指定联赛的赛程
+        获取指定联赛的赛程（完全符合官方API参数规范）
         PL=英超, SA=西甲, BL1=德甲, FR1=法甲, IT1=意甲
-        修复：日期格式符合API要求（YYYY-MM-DD），区分无密钥/请求失败
+        status可选：SCHEDULED（未开赛）、LIVE（进行中）、FINISHED（已完赛）
         """
-        # 无密钥直接返回模拟数据
         if not self.api_key:
             logger.info(f"🔄 FootballDataAPI 无API密钥→使用模拟数据（联赛：{competition_code}）")
             return _get_mock_matches(competition_code)
         
         try:
-            # 修复：日期格式改为API要求的YYYY-MM-DD，避免时区和格式错误
+            # 严格使用官方要求的英文参数名
             date_from = datetime.now().strftime("%Y-%m-%d")
             date_to = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
             
@@ -93,9 +88,10 @@ class FootballDataAPI:
             return matches
         
         except Exception as e:
-            # 区分不同错误类型，输出详细日志
             status_code = getattr(resp, 'status_code', '未知')
-            if status_code == 401:
+            if status_code == 400:
+                logger.error(f"获取{competition_code}赛程失败：请求参数格式错误（400），请检查参数规范")
+            elif status_code == 401:
                 logger.error(f"获取{competition_code}赛程失败：密钥无效/过期（401）")
             elif status_code == 429:
                 logger.error(f"获取{competition_code}赛程失败：API请求额度耗尽（429）")
@@ -103,7 +99,6 @@ class FootballDataAPI:
                 logger.error(f"获取{competition_code}赛程失败：IP被封禁/无权限（403）")
             else:
                 logger.error(f"获取{competition_code}赛程失败：HTTP状态码 {status_code}，错误信息：{e}")
-            # 请求失败返回空列表，不返回模拟数据，避免误导
             return []
     
     def get_team_standings(self, competition_code: str):
@@ -139,14 +134,13 @@ class FootballDataAPI:
 
 
 class UnderstatAPI:
-    """Understat数据（xG、射门等）【修复接口地址，适配公开API】"""
+    """Understat数据（xG、射门等）"""
     BASE_URL = "https://understat.com"
     
     @staticmethod
     def get_team_xg_stats(league: str = "EPL", season: str = "2024") -> Dict:
         """获取球队xG统计，league可选：EPL/LaLiga/Bundesliga/SerieA/Ligue1"""
         try:
-            # 修复：understat正确的公开接口地址
             url = f"{UnderstatAPI.BASE_URL}/main/leagueData"
             params = {"league": league, "season": season}
             logger.info(f"请求Understat {league} {season} xG数据：{url}")
@@ -174,7 +168,7 @@ class UnderstatAPI:
 
 
 class OddsAPI:
-    """赔率数据API（the-odds-api.com，修复无密钥处理、参数规范）"""
+    """赔率数据API（the-odds-api.com）"""
     BASE_URL = "https://api.the-odds-api.com/v4"
     
     def __init__(self, api_key: str = None):
@@ -182,11 +176,7 @@ class OddsAPI:
         logger.info(f"OddsAPI 初始化完成，密钥状态：{'已配置' if self.api_key else '未配置'}")
     
     def get_upcoming_matches(self, sport: str = "soccer_epl", regions: str = "uk,eu"):
-        """
-        获取即将进行的比赛赔率
-        sport可选：soccer_epl(英超)/soccer_la_liga(西甲)/soccer_bundesliga(德甲)/soccer_serie_a(意甲)/soccer_ligue_1(法甲)
-        regions可选：uk/eu/us/au
-        """
+        """获取即将进行的比赛赔率"""
         if not self.api_key:
             logger.warning("OddsAPI 无API密钥，跳过赔率请求")
             return []
@@ -203,7 +193,6 @@ class OddsAPI:
             resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             
-            # 输出剩余请求额度，方便排查额度问题
             remaining = resp.headers.get('x-requests-remaining', '未知')
             used = resp.headers.get('x-requests-used', '未知')
             logger.info(f"赔率数据请求成功，剩余请求额度：{remaining}，本次已用：{used}")
@@ -221,7 +210,7 @@ class OddsAPI:
 
 
 class SofascoreAPI:
-    """Sofascore快照数据API（修复接口地址规范）"""
+    """Sofascore快照数据API"""
     BASE_URL = "https://api.sofascore.com/api/v1"
     
     @staticmethod
@@ -250,10 +239,9 @@ class SofascoreAPI:
 
 
 class DataAggregator:
-    """数据聚合器 - 合并多个API源（修复密钥自动读取）"""
+    """数据聚合器"""
     
     def __init__(self, football_api_key: str = None, odds_api_key: str = None):
-        # 优先传入的密钥，兜底用环境变量，无需手动传参
         self.fdb = FootballDataAPI(football_api_key)
         self.understat = UnderstatAPI()
         self.odds = OddsAPI(odds_api_key)
@@ -274,10 +262,8 @@ class DataAggregator:
         }
         
         try:
-            # 获取赔率数据
             enhanced["odds"] = self.odds.get_upcoming_matches()
             
-            # 获取球队数据（如果有ID）
             if "homeTeam" in match and match["homeTeam"].get("id"):
                 team_form = self.sofascore.get_team_form(match["homeTeam"]["id"])
                 enhanced["team_form"]["home"] = team_form
@@ -300,13 +286,12 @@ class DataAggregator:
         }
 
 
-# 快速工厂函数
 def create_data_aggregator(football_api_key: str = None, odds_api_key: str = None) -> DataAggregator:
-    """创建数据聚合器实例，自动读取环境变量密钥"""
+    """创建数据聚合器实例"""
     return DataAggregator(football_api_key, odds_api_key)
 
 
-# ====================== 【修复】Mock 模拟数据（修复日期格式，避免特征工程报错） ======================
+# 模拟数据（修复日期格式，避免特征工程报错）
 SAMPLE_MATCHES = [
     {
         "id": 1001, 
@@ -359,7 +344,7 @@ SAMPLE_MATCHES = [
 ]
 
 def _get_mock_matches(competition_code):
-    """无 Key 时返回模拟赛程，修复日期格式为datetime对象，避免后续报错"""
-    logger.info(f"🔄 无 API Key → 使用模拟数据（联赛：{competition_code}，共 {len(SAMPLE_MATCHES)} 场）")
+    """无密钥时返回模拟赛程"""
+    logger.info(f"🔄 无 API Key → 使用模拟数据（联赛：{competition_code}）")
     filtered = [m for m in SAMPLE_MATCHES if m["competition"]["code"] == competition_code]
     return filtered
