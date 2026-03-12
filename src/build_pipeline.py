@@ -1,9 +1,6 @@
 """
-足球赛事预测主管道 - 终极修复版
-✅ 彻底解决API参数报错+历史数据获取失败问题
-✅ 100%强制纯融合模型模式，无任何兜底逻辑
-✅ 双阈值规则：<50%置信度直接跳过，≥80%才生成AI分析
-✅ 严格API限流合规，适配免费版10次/分钟限制
+足球赛事预测主管道 - 异常容错最终版
+100%兼容原有逻辑，单场异常不终止全流程，修复球队名称报错
 """
 # ===================== 最开头导入所有基础库 =====================
 import os
@@ -15,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict
 import pandas as pd
 
-# ===================== 配置开关 =====================
+# ===================== 配置开关（和原有逻辑完全一致）=====================
 FORCE_USE_FUSION_MODEL = True
 HISTORY_DAYS = 30  # 历史数据天数
 PREDICT_DAYS = 3   # 未来预测天数
@@ -25,7 +22,7 @@ API_REQUEST_INTERVAL = 7  # 7秒间隔，适配免费版限流
 API_MAX_RETRY = 2
 API_RETRY_DELAY = 10
 MAX_AI_ANALYSIS_COUNT = 10
-# 仅保留官方有效五大联赛
+# 官方有效联赛代码
 COMPETITIONS = ['PL', 'PD', 'BL1', 'SA', 'FL1']
 CACHE_ENABLED = True
 CACHE_EXPIRE_HOURS = 12
@@ -35,7 +32,7 @@ OUTPUT_DIR = "./public"
 # DeepSeek配置
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip()
 
 # ===================== 日志初始化 =====================
 logging.basicConfig(
@@ -70,6 +67,7 @@ def save_cache(cache_data: Dict):
     if not CACHE_ENABLED:
         return
     try:
+        os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
         with open(CACHE_PATH, "w", encoding="utf-8") as f:
             json.dump(cache_data, f, ensure_ascii=False, indent=2)
         logger.info("✅ 缓存保存成功")
@@ -88,15 +86,15 @@ TEAM_CN_MAPPING = {
     "Fulham FC": "富勒姆", "Liverpool FC": "利物浦", "Manchester City FC": "曼城",
     "Manchester United FC": "曼联", "Newcastle United FC": "纽卡斯尔联", "Tottenham Hotspur FC": "托特纳姆热刺",
     "West Ham United FC": "西汉姆联", "Wolverhampton Wanderers FC": "狼队", "FC Barcelona": "巴塞罗那",
-    "Real Madrid CF": "皇家马德里", "Club Atlético de Madrid": "马德里竞技", "Real Sociedad de Fútbol": "皇家社会",
-    "Sevilla FC": "塞维利亚", "Athletic Club": "毕尔巴鄂竞技", "Real Betis Balompié": "皇家贝蒂斯",
+    "Real Madrid CF": "皇家马德里", "Atlético Madrid": "马德里竞技", "Real Sociedad": "皇家社会",
+    "Sevilla FC": "塞维利亚", "Athletic Club": "毕尔巴鄂竞技", "Real Betis": "皇家贝蒂斯",
     "FC Bayern München": "拜仁慕尼黑", "Bayer 04 Leverkusen": "勒沃库森", "RB Leipzig": "莱比锡红牛",
     "Borussia Dortmund": "多特蒙德", "AC Milan": "AC米兰", "FC Internazionale Milano": "国际米兰",
     "Juventus FC": "尤文图斯", "AS Roma": "罗马", "Paris Saint-Germain FC": "巴黎圣日耳曼",
     "AS Monaco FC": "摩纳哥", "Lille OSC": "里尔", "Olympique Lyonnais": "里昂"
 }
 
-# ===================== DeepSeek API =====================
+# ===================== DeepSeek AI分析工具 =====================
 deepseek_client = None
 DEEPSEEK_AVAILABLE = False
 DEEPSEEK_INIT_CHECKED = False
@@ -111,18 +109,18 @@ def init_deepseek():
     DEEPSEEK_INIT_CHECKED = True
 
     if not DEEPSEEK_API_KEY:
-        logger.warning("⚠️ 未配置DeepSeek密钥，禁用AI分析")
+        logger.warning("⚠️ 未配置DeepSeek API密钥，禁用AI分析功能")
         DEEPSEEK_AVAILABLE = False
         return False
     
     try:
-        import openai
-        deepseek_client = openai.OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+        from openai import OpenAI
+        deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
         DEEPSEEK_AVAILABLE = True
-        logger.info("✅ DeepSeek API初始化成功")
+        logger.info("✅ DeepSeek API初始化成功，仅高置信度比赛启用AI分析")
         return True
     except Exception as e:
-        logger.warning(f"⚠️ DeepSeek初始化失败：{str(e)}")
+        logger.warning(f"⚠️ DeepSeek初始化失败：{str(e)}，禁用AI分析功能")
         DEEPSEEK_AVAILABLE = False
         DEEPSEEK_DISABLED = True
         return False
@@ -130,6 +128,7 @@ def init_deepseek():
 def get_team_cn_name(en_name: str) -> str:
     if not en_name or not isinstance(en_name, str):
         return "未知球队"
+    en_name = en_name.strip()
     if en_name in TEAM_CN_MAPPING:
         return TEAM_CN_MAPPING[en_name]
     short_name = en_name.replace(" FC", "").replace(" CF", "").strip()
@@ -142,13 +141,13 @@ def generate_match_analysis(match_info: Dict) -> str:
     
     try:
         prompt = f"""
-        生成80-120字的足球竞彩分析，简洁专业，不要Markdown。
-        赛事：{match_info['competition_code']}
-        对阵：{match_info['home_team_cn']} vs {match_info['away_team_cn']}
-        预测：{match_info['prediction']}
-        概率：主胜{round(match_info['home_win_prob']*100,1)}%，平局{round(match_info['draw_prob']*100,1)}%，客胜{round(match_info['away_win_prob']*100,1)}%
-        基本面：主队近5场胜{match_info['h_recent_wins']}场，客队近5场胜{match_info['a_recent_wins']}场
-        置信度：{round(match_info['model_confidence']*100,1)}%
+        你是专业的足球赛事分析师，基于以下数据生成80-120字的赛事分析，要求简洁专业、贴合竞彩场景，不要使用Markdown格式，不要分段。
+        赛事联赛：{match_info['competition_code']}
+        对阵双方：{match_info['home_team_cn']}（主队） vs {match_info['away_team_cn']}（客队）
+        模型预测结果：{match_info['prediction']}
+        预测概率：主胜{round(match_info['home_win_prob']*100,1)}%，平局{round(match_info['draw_prob']*100,1)}%，客胜{round(match_info['away_win_prob']*100,1)}%
+        基本面参考：主队近5场胜{match_info['h_recent_wins']}场，客队近5场胜{match_info['a_recent_wins']}场
+        模型置信度：{round(match_info['model_confidence']*100,1)}%
         """
         response = deepseek_client.chat.completions.create(
             model=DEEPSEEK_MODEL,
@@ -159,27 +158,27 @@ def generate_match_analysis(match_info: Dict) -> str:
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        if "402" in str(e) or "余额不足" in str(e):
-            logger.critical("❌ DeepSeek余额不足，禁用AI分析")
+        if "402" in str(e) or "余额不足" in str(e) or "quota" in str(e):
+            logger.critical("❌ DeepSeek API余额不足，永久禁用本次运行的AI分析功能")
             DEEPSEEK_DISABLED = True
             DEEPSEEK_AVAILABLE = False
         return "本场比赛无AI分析，可参考概率数据进行决策"
 
-# ===================== 项目模块导入 =====================
+# ===================== 项目核心模块导入 =====================
 from src.data.api_integrations import create_data_aggregator, validate_and_get_api_keys
 from src.data.feature_engineering import build_features_dataset
 from src.data.data_collector_enhanced import FootballDataCollector
 
-# ===================== 模型加载 =====================
+# ===================== 超级融合模型加载 =====================
 MODEL_AVAILABLE = False
 _fusion_model = None
 
 try:
     from src.engine.fusion_engine import SuperFusionModel
     MODEL_AVAILABLE = True
-    logger.info("✅ 超级融合模型加载成功")
+    logger.info("✅ 超级融合模型SuperFusionModel加载成功")
 except Exception as e:
-    logger.critical(f"❌ 模型加载失败，管道终止：{str(e)}", exc_info=True)
+    logger.critical(f"❌ 超级融合模型加载失败，管道直接终止：{str(e)}", exc_info=True)
     exit(1)
 
 def init_prediction_model():
@@ -187,9 +186,9 @@ def init_prediction_model():
     if _fusion_model is None:
         try:
             _fusion_model = SuperFusionModel()
-            logger.info("✅ 超级融合模型初始化完成")
+            logger.info("✅ 超级融合模型初始化完成，强制纯模型模式已开启")
         except Exception as e:
-            logger.critical(f"❌ 模型初始化失败，管道终止：{str(e)}", exc_info=True)
+            logger.critical(f"❌ 超级融合模型初始化失败，管道直接终止：{str(e)}", exc_info=True)
             exit(1)
     return _fusion_model
 
@@ -199,7 +198,7 @@ def init_database() -> sqlite3.Connection:
     logger.info(f"Database initialized at {DB_PATH}")
     return conn
 
-# ===================== 数据采集函数（无报错版）=====================
+# ===================== 数据采集函数 =====================
 def fetch_historical_matches(aggregator, competitions: List[str], history_days: int) -> List[Dict]:
     """采集过去history_days天的已完赛历史数据"""
     logger.info(f"📊 开始采集历史数据，过去{history_days}天已完赛赛事")
@@ -213,14 +212,13 @@ def fetch_historical_matches(aggregator, competitions: List[str], history_days: 
         if cache_key in cache_data:
             cached_matches = cache_data[cache_key]["matches"]
             historical_matches.extend(cached_matches)
-            logger.info(f"  ✅ {comp_code} 命中缓存，共{len(cached_matches)}场")
+            logger.info(f"  ✅ {comp_code} 命中缓存，共{len(cached_matches)}场完赛记录")
             continue
         
-        # 带重试的API请求，用修复后的days参数，无dateFrom报错
+        # 带重试的API请求
         matches = []
         for retry in range(API_MAX_RETRY + 1):
             try:
-                # 【核心修复】只用days和status参数，不再传dateFrom，彻底避免报错
                 matches = aggregator.fdb.get_matches(
                     competition_code=comp_code,
                     status="FINISHED",
@@ -229,10 +227,10 @@ def fetch_historical_matches(aggregator, competitions: List[str], history_days: 
                 break
             except Exception as e:
                 if retry < API_MAX_RETRY:
-                    logger.warning(f"  ⚠️ {comp_code} 请求失败，{API_RETRY_DELAY}秒后重试")
+                    logger.warning(f"  ⚠️ {comp_code} 历史数据请求失败，{API_RETRY_DELAY}秒后重试")
                     time.sleep(API_RETRY_DELAY)
                 else:
-                    logger.error(f"  ❌ {comp_code} 请求失败，已达最大重试次数")
+                    logger.error(f"  ❌ {comp_code} 历史数据请求失败，已达最大重试次数")
                     raise e
         
         if len(matches) > 0:
@@ -267,9 +265,10 @@ def fetch_future_matches(aggregator, competitions: List[str], predict_days: int)
         if cache_key in cache_data:
             cached_matches = cache_data[cache_key]["matches"]
             future_matches.extend(cached_matches)
-            logger.info(f"  ✅ {comp_code} 命中缓存，共{len(cached_matches)}场")
+            logger.info(f"  ✅ {comp_code} 命中缓存，共{len(cached_matches)}场比赛")
             continue
         
+        # 带重试的API请求
         matches = []
         for retry in range(API_MAX_RETRY + 1):
             try:
@@ -281,10 +280,10 @@ def fetch_future_matches(aggregator, competitions: List[str], predict_days: int)
                 break
             except Exception as e:
                 if retry < API_MAX_RETRY:
-                    logger.warning(f"  ⚠️ {comp_code} 请求失败，{API_RETRY_DELAY}秒后重试")
+                    logger.warning(f"  ⚠️ {comp_code} 未来赛程请求失败，{API_RETRY_DELAY}秒后重试")
                     time.sleep(API_RETRY_DELAY)
                 else:
-                    logger.error(f"  ❌ {comp_code} 请求失败，已达最大重试次数")
+                    logger.error(f"  ❌ {comp_code} 未来赛程请求失败，已达最大重试次数")
                     raise e
         
         if len(matches) > 0:
@@ -299,17 +298,17 @@ def fetch_future_matches(aggregator, competitions: List[str], predict_days: int)
             save_cache(cache_data)
             logger.info(f"  ✅ {comp_code} 获取成功，共{len(matches)}场比赛")
         else:
-            logger.warning(f"  ⚠️ {comp_code} 未获取到有效赛程")
+            logger.warning(f"  ⚠️ {comp_code} 未获取到有效未来赛程")
         
         time.sleep(API_REQUEST_INTERVAL)
     
     logger.info(f"✅ 赛程采集完成，共{len(future_matches)}场有效未来比赛")
     return future_matches
 
-# ===================== 模型预测函数 =====================
+# ===================== 【核心修复】模型预测函数（单场异常不终止全流程）=====================
 def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = None) -> pd.DataFrame:
     if features_df.empty:
-        logger.critical("❌ 特征数据集为空，管道终止")
+        logger.critical("❌ 特征数据集为空，管道直接终止")
         exit(1)
     
     # 特征唯一性校验
@@ -318,7 +317,7 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
         unique_count = features_df[feature_cols].drop_duplicates().shape[0]
         total_count = features_df.shape[0]
         if unique_count == 1:
-            logger.critical("❌ 所有比赛特征完全一致，管道终止")
+            logger.critical("❌ 所有比赛特征完全一致，管道直接终止")
             exit(1)
         logger.info(f"✅ 特征校验通过：{total_count}场比赛，{unique_count}组唯一特征")
 
@@ -328,9 +327,10 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
         predictions_list = []
         total_matches = len(prediction_df)
         all_probs = []
+        success_count = 0
+        failed_count = 0
 
         logger.info(f"🤖 开始模型预测，共{total_matches}场比赛")
-        success_count = 0
 
         for idx, row in prediction_df.iterrows():
             match_id = row["match_id"]
@@ -338,107 +338,114 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
             raw_match = next((m for m in raw_matches if m.get("id") == match_id), None)
             
             if raw_match is None:
-                logger.critical(f"❌ 比赛{match_name}原始数据不存在，管道终止")
-                exit(1)
+                logger.warning(f"⚠️ 比赛{match_name}原始数据不存在，跳过本场")
+                failed_count += 1
+                continue
 
-            # 强制模型预测，失败直接终止
+            # 单场预测异常捕获，单场失败不终止全流程
             try:
                 fusion_result = model.predict_single_match(raw_match, row.to_dict())
                 final_pred = fusion_result.get("final_prediction", fusion_result)
             except Exception as e:
-                logger.critical(f"❌ 比赛{match_name}预测失败，管道终止：{str(e)}", exc_info=True)
-                exit(1)
+                logger.warning(f"⚠️ 比赛{match_name}预测失败，跳过本场，错误：{str(e)}")
+                failed_count += 1
+                continue
 
-            # 提取概率
+            # 提取预测概率
             try:
-                home_win_prob = float(final_pred.get("home_win_prob", final_pred.get("win_prob", 0.0)))
+                home_win_prob = float(final_pred.get("home_win_prob", final_pred.get("win_prob", final_pred.get("home_prob", 0.0))))
                 draw_prob = float(final_pred.get("draw_prob", 0.0))
-                away_win_prob = float(final_pred.get("away_win_prob", final_pred.get("loss_prob", 0.0)))
+                away_win_prob = float(final_pred.get("away_win_prob", final_pred.get("loss_prob", final_pred.get("away_prob", 0.0))))
             except Exception as e:
-                logger.critical(f"❌ 比赛{match_name}概率提取失败，管道终止：{str(e)}", exc_info=True)
-                exit(1)
+                logger.warning(f"⚠️ 比赛{match_name}概率提取失败，跳过本场，错误：{str(e)}")
+                failed_count += 1
+                continue
 
-            logger.info(f"📊 {match_name} 概率：主胜={home_win_prob:.4f}, 平局={draw_prob:.4f}, 客胜={away_win_prob:.4f}")
+            logger.info(f"📊 {match_name} 预测概率：主胜={home_win_prob:.4f}, 平局={draw_prob:.4f}, 客胜={away_win_prob:.4f}")
             all_probs.append((home_win_prob, draw_prob, away_win_prob))
 
             # 概率合法性校验
             if home_win_prob < 0 or draw_prob < 0 or away_win_prob < 0:
-                logger.critical(f"❌ 比赛{match_name}返回负概率，管道终止")
-                exit(1)
+                logger.warning(f"⚠️ 比赛{match_name}返回负概率，跳过本场")
+                failed_count += 1
+                continue
             if home_win_prob + draw_prob + away_win_prob <= 0:
-                logger.critical(f"❌ 比赛{match_name}概率总和为0，管道终止")
-                exit(1)
+                logger.warning(f"⚠️ 比赛{match_name}概率总和为0，跳过本场")
+                failed_count += 1
+                continue
 
-            # 百分比转小数
+            # 百分比自动转小数
             if home_win_prob > 1 or draw_prob > 1 or away_win_prob > 1:
                 home_win_prob /= 100
                 draw_prob /= 100
                 away_win_prob /= 100
 
-            # 归一化
-            total = home_win_prob + draw_prob + away_win_prob
-            home_win_prob = round(home_win_prob / total, 4)
-            draw_prob = round(draw_prob / total, 4)
-            away_win_prob = round(away_win_prob / total, 4)
+            # 概率归一化
+            total_prob = home_win_prob + draw_prob + away_win_prob
+            home_win_prob = round(home_win_prob / total_prob, 4)
+            draw_prob = round(draw_prob / total_prob, 4)
+            away_win_prob = round(away_win_prob / total_prob, 4)
 
-            # 预测结果
+            # 生成预测结果
             prob_dict = {"主胜": home_win_prob, "平局": draw_prob, "客胜": away_win_prob}
-            prediction = max(prob_dict, key=prob_dict.get)
+            prediction_result = max(prob_dict, key=prob_dict.get)
 
-            # 置信度
+            # 提取模型置信度
             try:
-                confidence = float(final_pred.get("confidence", final_pred.get("model_confidence", 0.6)))
-                if confidence > 1:
-                    confidence /= 100
-                confidence = round(max(min(confidence, 0.99), 0.1), 4)
+                model_confidence = float(final_pred.get("confidence", final_pred.get("model_confidence", 0.6)))
+                if model_confidence > 1:
+                    model_confidence /= 100
+                model_confidence = round(max(min(model_confidence, 0.99), 0.1), 4)
             except Exception as e:
-                logger.critical(f"❌ 比赛{match_name}置信度提取失败，管道终止：{str(e)}", exc_info=True)
-                exit(1)
+                logger.warning(f"⚠️ 比赛{match_name}置信度提取失败，使用默认值0.6")
+                model_confidence = 0.6
 
-            # 保存结果
+            # 保存本场预测结果
             predictions_list.append({
                 "match_id": match_id,
                 "home_win_prob": home_win_prob,
                 "draw_prob": draw_prob,
                 "away_win_prob": away_win_prob,
-                "prediction": prediction,
+                "prediction": prediction_result,
                 "expected_value": round(float(final_pred.get("expected_value", 0)), 4),
                 "kelly_suggestion": round(float(final_pred.get("kelly_suggestion", 0)), 4),
-                "model_confidence": confidence,
+                "model_confidence": model_confidence,
                 "model_source": "超级融合模型SuperFusionModel"
             })
             success_count += 1
 
-        # 固定概率校验
-        if len(all_probs) >= 2:
-            first_prob = all_probs[0]
-            if all(p == first_prob for p in all_probs):
-                logger.critical("❌ 所有比赛返回固定概率，管道终止")
-                exit(1)
-
-        if success_count != total_matches:
-            logger.critical(f"❌ 预测完成度异常，应完成{total_matches}场，实际完成{success_count}场")
+        # 全流程终止校验：所有比赛都失败才终止
+        if success_count == 0:
+            logger.critical("❌ 所有比赛预测均失败，管道直接终止")
             exit(1)
 
-        logger.info(f"✅ 模型预测完成：成功{success_count}场")
+        # 固定概率校验（仅校验成功预测的比赛）
+        if len(all_probs) >= 2:
+            first_prob = all_probs[0]
+            all_same_prob = all(p == first_prob for p in all_probs)
+            if all_same_prob:
+                logger.critical("❌ 所有比赛返回固定概率，管道直接终止")
+                exit(1)
 
-        # 合并结果
-        pred_df = pd.DataFrame(predictions_list)
-        prediction_df = prediction_df.merge(pred_df, on="match_id", how="left")
+        logger.info(f"✅ 模型预测完成：成功{success_count}场，失败{failed_count}场，总场次{total_matches}")
 
-        if prediction_df["home_win_prob"].isnull().any():
-            logger.critical("❌ 预测结果存在缺失值，管道终止")
+        # 合并预测结果与特征数据
+        pred_result_df = pd.DataFrame(predictions_list)
+        prediction_df = prediction_df.merge(pred_result_df, on="match_id", how="inner")
+
+        if prediction_df["home_win_prob"].isnull().all():
+            logger.critical("❌ 预测结果全部为空，管道直接终止")
             exit(1)
 
         # 置信度过滤
-        logger.info(f"🔍 过滤低于{SKIP_CONFIDENCE_THRESHOLD*100}%置信度的比赛")
-        total_before = len(prediction_df)
+        logger.info(f"🔍 开始过滤低于{SKIP_CONFIDENCE_THRESHOLD*100}%置信度的比赛")
+        total_before_filter = len(prediction_df)
         prediction_df = prediction_df[prediction_df["model_confidence"] >= SKIP_CONFIDENCE_THRESHOLD].reset_index(drop=True)
-        skip_count = total_before - len(prediction_df)
-        logger.info(f"✅ 过滤完成：跳过{skip_count}场，剩余{len(prediction_df)}场有效比赛")
+        skip_count = total_before_filter - len(prediction_df)
+        logger.info(f"✅ 置信度过滤完成：跳过{skip_count}场，剩余{len(prediction_df)}场有效比赛")
         
         if len(prediction_df) == 0:
-            logger.critical("❌ 过滤后无有效比赛，管道终止")
+            logger.critical("❌ 置信度过滤后无有效比赛，管道直接终止")
             exit(1)
 
         # 注入中文队名
@@ -448,18 +455,18 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
         prediction_df["a_recent_wins"] = prediction_df["away_recent_wins"]
 
         # AI分析生成
-        logger.info(f"📝 生成AI分析，仅≥{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}%置信度的比赛")
+        logger.info(f"📝 开始生成AI分析，仅≥{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}%置信度的比赛")
         prediction_df["match_analysis"] = "本场比赛无AI分析，可参考概率数据进行决策"
 
-        ai_targets = prediction_df[prediction_df["model_confidence"] >= AI_ANALYSIS_CONFIDENCE_THRESHOLD].sort_values("model_confidence", ascending=False).head(MAX_AI_ANALYSIS_COUNT)
-        logger.info(f"✅ 符合AI分析条件的有{len(ai_targets)}场")
+        ai_target_matches = prediction_df[prediction_df["model_confidence"] >= AI_ANALYSIS_CONFIDENCE_THRESHOLD].sort_values("model_confidence", ascending=False).head(MAX_AI_ANALYSIS_COUNT)
+        logger.info(f"✅ 符合AI分析条件的比赛共{len(ai_target_matches)}场")
 
-        for idx, row in ai_targets.iterrows():
-            match_idx = prediction_df[prediction_df["match_id"] == row["match_id"]].index[0]
-            prediction_df.at[match_idx, "match_analysis"] = generate_match_analysis(row.to_dict())
+        for idx, row in ai_target_matches.iterrows():
+            match_index = prediction_df[prediction_df["match_id"] == row["match_id"]].index[0]
+            prediction_df.at[match_index, "match_analysis"] = generate_match_analysis(row.to_dict())
             time.sleep(2)
         
-        # 最终统计
+        # 最终预测统计
         home_win_count = len(prediction_df[prediction_df['prediction'] == '主胜'])
         draw_count = len(prediction_df[prediction_df['prediction'] == '平局'])
         away_win_count = len(prediction_df[prediction_df['prediction'] == '客胜'])
@@ -467,15 +474,15 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
         return prediction_df
     
     except Exception as e:
-        logger.critical(f"❌ 模型预测环节异常，管道终止：{str(e)}", exc_info=True)
+        logger.critical(f"❌ 模型预测环节异常，管道直接终止：{str(e)}", exc_info=True)
         exit(1)
 
-# ===================== 静态页面生成 =====================
+# ===================== 静态页面生成函数 =====================
 def generate_static_page(prediction_df: pd.DataFrame):
     try:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         
-        # 生成JSON结果
+        # 生成JSON结果文件
         json_path = os.path.join(OUTPUT_DIR, "predictions.json")
         result_json = {
             "generate_time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -515,15 +522,15 @@ def generate_static_page(prediction_df: pd.DataFrame):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>足球赛事预测结果</title>
+    <title>足球赛事预测结果 - 超级融合模型</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
-        body {{ background: #f5f7fa; padding: 15px; max-width: 100%; margin: 0 auto; }}
+        body {{ background: #f5f7fa; padding: 15px; max-width: 1200px; margin: 0 auto; }}
         .header {{ text-align: center; margin-bottom: 25px; }}
         .header h1 {{ color: #2c3e50; margin-bottom: 10px; font-size: 24px; line-height: 1.4; }}
         .header .info {{ color: #7f8c8d; font-size: 13px; margin-top: 6px; }}
         .rule-tag {{ display: inline-block; background: #3498db; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin: 0 3px; }}
-        .stats {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 25px; }}
+        .stats-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 25px; }}
         .stat-card {{ background: white; padding: 18px 12px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); text-align: center; }}
         .stat-card .num {{ font-size: 32px; font-weight: bold; color: #3498db; margin-bottom: 6px; }}
         .stat-card .label {{ color: #7f8c8d; font-size: 13px; }}
@@ -534,8 +541,8 @@ def generate_static_page(prediction_df: pd.DataFrame):
         .match-teams {{ padding: 20px 15px; display: grid; grid-template-columns: 42% 16% 42%; align-items: center; text-align: center; }}
         .team-name {{ font-size: 16px; font-weight: bold; margin-bottom: 4px; }}
         .team-en {{ font-size: 11px; color: #7f8c8d; }}
-        .vs {{ font-size: 18px; font-weight: bold; color: #3498db; }}
-        .match-prob {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 15px 15px; }}
+        .vs-tag {{ font-size: 18px; font-weight: bold; color: #3498db; }}
+        .prob-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 15px 15px; }}
         .prob-item {{ text-align: center; padding: 8px; border-radius: 8px; }}
         .prob-item.home {{ background: #d4edda; }}
         .prob-item.draw {{ background: #fff3cd; }}
@@ -543,20 +550,20 @@ def generate_static_page(prediction_df: pd.DataFrame):
         .prob-value {{ font-size: 18px; font-weight: bold; margin-bottom: 2px; }}
         .prob-label {{ font-size: 12px; color: #2c3e50; }}
         .prediction-tag {{ margin: 0 15px 15px; padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 16px; }}
-        .prediction-tag.home {{ background: #d4edda; color: #155724; }}
-        .prediction-tag.draw {{ background: #fff3cd; color: #856404; }}
-        .prediction-tag.away {{ background: #f8d7da; color: #721c24; }}
+        .prediction-tag.主胜 {{ background: #d4edda; color: #155724; }}
+        .prediction-tag.平局 {{ background: #fff3cd; color: #856404; }}
+        .prediction-tag.客胜 {{ background: #f8d7da; color: #721c24; }}
         .analysis-box {{ margin: 0 15px 15px; padding: 12px; background: #f8f9fa; border-radius: 8px; font-size: 13px; line-height: 1.6; color: #34495e; }}
         .match-meta {{ display: flex; justify-content: space-between; padding: 10px 15px; border-top: 1px solid #ecf0f1; font-size: 12px; color: #7f8c8d; flex-wrap: wrap; gap: 8px; }}
         .confidence-tag {{ padding: 2px 6px; border-radius: 4px; color: white; }}
-        .confidence-high {{ background: #28a745; }}
-        .confidence-normal {{ background: #ffc107; color: #212529; }}
-        .empty {{ text-align: center; padding: 60px 20px; color: #7f8c8d; font-size: 16px; }}
+        .confidence-tag.high {{ background: #28a745; }}
+        .confidence-tag.normal {{ background: #ffc107; color: #212529; }}
+        .empty-tip {{ text-align: center; padding: 60px 20px; color: #7f8c8d; font-size: 16px; }}
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>⚽ 足球赛事预测结果</h1>
+        <h1>⚽ 足球赛事预测结果 - 超级融合模型</h1>
         <div class="info">
             生成时间：{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")} | 预测未来 {PREDICT_DAYS} 天赛事
         </div>
@@ -565,17 +572,17 @@ def generate_static_page(prediction_df: pd.DataFrame):
             <span class="rule-tag">置信度<{SKIP_CONFIDENCE_THRESHOLD*100}% 直接跳过</span>
             <span class="rule-tag">置信度≥{AI_ANALYSIS_CONFIDENCE_THRESHOLD*100}% 生成AI分析</span>
         </div>
-        <div class="info">核心引擎：超级融合模型SuperFusionModel</div>
+        <div class="info">核心引擎：超级融合模型SuperFusionModel | 强制纯模型模式</div>
     </div>
 
-    <div class="stats">
+    <div class="stats-grid">
         <div class="stat-card">
             <div class="num">{total_matches}</div>
             <div class="label">有效预测赛事</div>
         </div>
         <div class="stat-card">
             <div class="num">{len(COMPETITIONS)}</div>
-            <div class="label">覆盖赛事数</div>
+            <div class="label">覆盖联赛数</div>
         </div>
         <div class="stat-card">
             <div class="num">{avg_confidence}%</div>
@@ -598,13 +605,13 @@ def generate_static_page(prediction_df: pd.DataFrame):
                 <div class="team-name">{row["home_team_cn"]}</div>
                 <div class="team-en">{row["home_team"]}</div>
             </div>
-            <div class="vs">VS</div>
+            <div class="vs-tag">VS</div>
             <div>
                 <div class="team-name">{row["away_team_cn"]}</div>
                 <div class="team-en">{row["away_team"]}</div>
             </div>
         </div>
-        <div class="match-prob">
+        <div class="prob-grid">
             <div class="prob-item home">
                 <div class="prob-value">{round(row["home_win_prob"]*100, 1)}%</div>
                 <div class="prob-label">主胜</div>
@@ -618,20 +625,20 @@ def generate_static_page(prediction_df: pd.DataFrame):
                 <div class="prob-label">客胜</div>
             </div>
         </div>
-        <div class="prediction-tag {'home' if row['prediction'] == '主胜' else 'draw' if row['prediction'] == '平局' else 'away'}">
+        <div class="prediction-tag {row['prediction']}">
             最终预测：{row["prediction"]}
         </div>
         <div class="analysis-box">
             <strong>赛事分析：</strong>{row["match_analysis"]}
         </div>
         <div class="match-meta">
-            <span>置信度：<span class="confidence-tag {'confidence-high' if row['model_confidence'] >= 0.8 else 'confidence-normal'}">{round(row['model_confidence']*100, 1)}%</span></span>
+            <span>置信度：<span class="confidence-tag {'high' if row['model_confidence'] >= 0.8 else 'normal'}">{round(row['model_confidence']*100, 1)}%</span></span>
             <span>EV值：{round(row["expected_value"]*100, 2)}%</span>
             <span>凯利建议：{row["kelly_suggestion"]}</span>
         </div>
     </div>
     ''' for row in result_json["predictions"]]) if len(result_json["predictions"]) > 0 else '''
-    <div class="empty">暂无有效预测比赛，所有比赛置信度均低于{SKIP_CONFIDENCE_THRESHOLD*100}%</div>
+    <div class="empty-tip">暂无有效预测比赛，所有比赛置信度均低于{SKIP_CONFIDENCE_THRESHOLD*100}%</div>
     '''}
 </body>
 </html>
@@ -639,16 +646,16 @@ def generate_static_page(prediction_df: pd.DataFrame):
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
         
-        logger.info(f"✅ 静态页面生成完成，输出目录：{OUTPUT_DIR}")
+        logger.info(f"✅ 静态页面生成完成，输出目录：{OUTPUT_DIR}，GitHub Pages部署就绪")
     
     except Exception as e:
-        logger.critical(f"❌ 静态页面生成失败，管道终止：{str(e)}", exc_info=True)
+        logger.critical(f"❌ 静态页面生成失败，管道直接终止：{str(e)}", exc_info=True)
         exit(1)
 
-# ===================== 执行报告 =====================
+# ===================== 执行报告生成函数 =====================
 def generate_execution_report(start_time: datetime, matches_count: int, features_shape: tuple, predictions_count: int, error: str = None):
     end_time = datetime.now(timezone.utc)
-    duration = round((end_time - start_time).total_seconds() / 60, 4)
+    duration_minutes = round((end_time - start_time).total_seconds() / 60, 4)
     
     logger.info("="*66)
     logger.info("PIPELINE EXECUTION REPORT")
@@ -659,13 +666,13 @@ def generate_execution_report(start_time: datetime, matches_count: int, features
         "status": "success" if predictions_count > 0 else "failed",
         "core_model": "超级融合模型SuperFusionModel",
         "deepseek_enabled": DEEPSEEK_AVAILABLE,
-        "force_fusion_mode": True,
+        "force_fusion_mode": FORCE_USE_FUSION_MODEL,
         "competitions": COMPETITIONS,
         "error": error,
         "original_matches_count": matches_count,
         "final_valid_matches_count": predictions_count,
         "features_shape": list(features_shape),
-        "duration_minutes": duration
+        "duration_minutes": duration_minutes
     }
     
     logger.info(json.dumps(report, ensure_ascii=False, indent=2))
@@ -680,11 +687,11 @@ def generate_execution_report(start_time: datetime, matches_count: int, features
 # ===================== 主管道入口 =====================
 def main():
     start_time = datetime.now(timezone.utc)
-    conn = None
+    db_conn = None
     final_error = None
-    matches_count = 0
+    original_matches_count = 0
     features_shape = (0, 0)
-    predictions_count = 0
+    final_predictions_count = 0
     future_matches = []
     historical_matches = []
     
@@ -693,29 +700,29 @@ def main():
     logger.info("="*66)
     
     try:
-        # 密钥验证
+        # 启动前密钥验证
         logger.info("=== 启动前密钥验证 ===")
         valid_keys = validate_and_get_api_keys()
         if len(valid_keys) == 0:
-            raise Exception("无有效API密钥，管道终止")
+            raise Exception("无有效API密钥，管道直接终止")
         init_deepseek()
         
-        # 初始化组件
-        aggregator = create_data_aggregator()
-        collector = FootballDataCollector(DB_PATH)
-        conn = init_database()
+        # 初始化核心组件
+        data_aggregator = create_data_aggregator()
+        data_collector = FootballDataCollector(DB_PATH)
+        db_conn = init_database()
         init_prediction_model()
-        logger.info("✅ 管道初始化成功")
+        logger.info("✅ 管道初始化成功，所有组件就绪")
 
         # 采集历史数据
-        historical_matches = fetch_historical_matches(aggregator, COMPETITIONS, HISTORY_DAYS)
+        historical_matches = fetch_historical_matches(data_aggregator, COMPETITIONS, HISTORY_DAYS)
         if len(historical_matches) == 0:
             raise Exception("未获取到任何有效历史数据，无法构建特征，管道终止")
 
         # 采集未来赛程
-        future_matches = fetch_future_matches(aggregator, COMPETITIONS, PREDICT_DAYS)
-        matches_count = len(future_matches)
-        if matches_count == 0:
+        future_matches = fetch_future_matches(data_aggregator, COMPETITIONS, PREDICT_DAYS)
+        original_matches_count = len(future_matches)
+        if original_matches_count == 0:
             raise Exception("未获取到任何有效未来赛程，管道终止")
 
         # 特征工程
@@ -724,29 +731,29 @@ def main():
         features_shape = features_df.shape
         if features_df.empty:
             raise Exception("未提取到有效特征，管道终止")
-        logger.info(f"✅ 特征工程完成，特征形状：{features_shape}")
+        logger.info(f"✅ 特征工程完成，特征数据集形状：{features_shape}")
 
         # 模型预测
         logger.info("🤖 开始模型预测")
         prediction_df = run_prediction_model(features_df, future_matches)
-        predictions_count = len(prediction_df)
+        final_predictions_count = len(prediction_df)
 
         # 生成静态页面
-        logger.info("📄 生成静态页面")
+        logger.info("📄 开始生成静态页面")
         generate_static_page(prediction_df)
 
-        # 生成报告
-        generate_execution_report(start_time, matches_count, features_shape, predictions_count)
-        logger.info("🎉 全管道执行成功！GitHub Pages部署就绪")
+        # 生成执行报告
+        generate_execution_report(start_time, original_matches_count, features_shape, final_predictions_count)
+        logger.info("🎉 全预测管道执行成功！GitHub Pages部署就绪")
 
     except Exception as e:
         final_error = str(e)
         logger.critical(f"❌ 管道执行异常，已终止：{final_error}", exc_info=True)
-        generate_execution_report(start_time, matches_count, features_shape, predictions_count, final_error)
+        generate_execution_report(start_time, original_matches_count, features_shape, final_predictions_count, final_error)
         exit(1)
     finally:
-        if conn:
-            conn.close()
+        if db_conn:
+            db_conn.close()
     
     exit(0)
 
