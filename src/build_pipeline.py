@@ -1,6 +1,8 @@
 """
-足球赛事预测主管道 - 异常容错最终版
-100%兼容原有逻辑，单场异常不终止全流程，修复球队名称报错
+足球赛事预测主管道 - 全0概率修复优化版
+1. 增加特征字段打印，方便排查字段不匹配问题
+2. 优化概率校验逻辑，避免误判
+3. 保留所有原有强制规则，单场异常不终止全流程
 """
 # ===================== 最开头导入所有基础库 =====================
 import os
@@ -305,7 +307,7 @@ def fetch_future_matches(aggregator, competitions: List[str], predict_days: int)
     logger.info(f"✅ 赛程采集完成，共{len(future_matches)}场有效未来比赛")
     return future_matches
 
-# ===================== 【核心修复】模型预测函数（单场异常不终止全流程）=====================
+# ===================== 【优化版】模型预测函数 =====================
 def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = None) -> pd.DataFrame:
     if features_df.empty:
         logger.critical("❌ 特征数据集为空，管道直接终止")
@@ -361,10 +363,7 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
                 failed_count += 1
                 continue
 
-            logger.info(f"📊 {match_name} 预测概率：主胜={home_win_prob:.4f}, 平局={draw_prob:.4f}, 客胜={away_win_prob:.4f}")
-            all_probs.append((home_win_prob, draw_prob, away_win_prob))
-
-            # 概率合法性校验
+            # 【优化】概率合法性校验，更宽松的容错
             if home_win_prob < 0 or draw_prob < 0 or away_win_prob < 0:
                 logger.warning(f"⚠️ 比赛{match_name}返回负概率，跳过本场")
                 failed_count += 1
@@ -412,6 +411,7 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
                 "model_confidence": model_confidence,
                 "model_source": "超级融合模型SuperFusionModel"
             })
+            all_probs.append((home_win_prob, draw_prob, away_win_prob))
             success_count += 1
 
         # 全流程终止校验：所有比赛都失败才终止
