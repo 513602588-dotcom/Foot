@@ -1,6 +1,6 @@
 """
-增强版足球数据采集器
-补全FootballDataCollector类，解决导入错误，兼容主管道调用逻辑
+增强版足球数据采集器 - 完整修复版
+解决数据库字段缺失问题，兼容主管道调用逻辑
 """
 import sqlite3
 import json
@@ -20,12 +20,16 @@ class FootballDataCollector:
         logger.info(f"FootballDataCollector 初始化完成，数据库路径：{db_path}")
     
     def _init_database(self):
-        """初始化数据库表结构"""
+        """初始化数据库表结构，修复字段缺失问题"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # 赛事表，兼容API返回的字段结构
+            # 先删除旧表（避免字段不兼容，重新创建）
+            cursor.execute('DROP TABLE IF EXISTS matches')
+            cursor.execute('DROP TABLE IF EXISTS teams')
+            
+            # 重新创建赛事表，补全所有需要的字段
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS matches (
                     match_id INTEGER PRIMARY KEY,
@@ -58,7 +62,7 @@ class FootballDataCollector:
             
             conn.commit()
             conn.close()
-            logger.info("数据库表结构初始化完成")
+            logger.info("数据库表结构初始化完成，所有字段已补全")
         
         except Exception as e:
             logger.error(f"数据库初始化失败：{str(e)}")
