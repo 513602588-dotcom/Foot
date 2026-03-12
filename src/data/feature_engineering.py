@@ -1,7 +1,6 @@
 """
-高级特征工程 - 完整适配项目版
-包括球队形态、球员伤疲、头对头历史、攻防强度等专业特征
-100%兼容football-data.org API数据结构，修复所有报错点
+高级特征工程 - 字段名完全适配版
+彻底解决字段名不匹配导致的KeyError，保留所有原有的高级特征逻辑
 """
 
 import pandas as pd
@@ -62,7 +61,7 @@ def parse_match_result(match: Dict, is_home: bool) -> Tuple[str, int, int]:
 
 
 class FeatureEngineer:
-    """高级特征工程 - 完整适配版"""
+    """高级特征工程 - 字段名完全适配模型预测代码"""
     
     def __init__(self, lookback_days: int = 365):
         self.lookback_days = lookback_days
@@ -71,14 +70,18 @@ class FeatureEngineer:
     
     def extract_team_form_features(self, team_name: str, matches_df: pd.DataFrame, days: int = 30) -> Dict:
         """
-        提取球队近期形态特征
+        提取球队近期形态特征，字段名完全适配模型预测代码
         包括：胜率、进球、失球、xG、连胜/连不胜、攻防强度等
         """
         try:
             now_utc = datetime.now(timezone.utc)
             recent_cutoff = now_utc - timedelta(days=days)
             
-            # 适配API数据结构，筛选球队最近比赛
+            # 修复：历史数据为空时，直接返回默认特征，避免报错
+            if matches_df.empty:
+                return self._default_team_features()
+            
+            # 筛选球队最近比赛
             team_matches = matches_df[
                 ((matches_df['home_team_name'] == team_name) | (matches_df['away_team_name'] == team_name)) &
                 (matches_df['match_date'] >= recent_cutoff)
@@ -110,13 +113,13 @@ class FeatureEngineer:
                     axis=1, result_type='expand'
                 )
             
-            # 核心特征计算
+            # 核心特征计算，字段名和模型预测代码完全匹配
             features = {
                 # 最近N场基础战绩
                 'matches_played': len(team_matches),
-                'wins': len(team_matches[team_matches['result'] == 'W']),
-                'draws': len(team_matches[team_matches['result'] == 'D']),
-                'losses': len(team_matches[team_matches['result'] == 'L']),
+                'recent_wins': len(team_matches[team_matches['result'] == 'W']),
+                'recent_draws': len(team_matches[team_matches['result'] == 'D']),
+                'recent_losses': len(team_matches[team_matches['result'] == 'L']),
                 
                 # 进球失球核心数据
                 'goals_for': team_matches['goals_for'].sum(),
@@ -161,7 +164,11 @@ class FeatureEngineer:
         提取两队历史交锋（H2H）特征
         """
         try:
-            # 适配API数据结构，筛选两队历史比赛
+            # 修复：历史数据为空时，直接返回默认特征
+            if matches_df.empty:
+                return self._default_h2h_features()
+            
+            # 筛选两队历史比赛
             h2h_matches = matches_df[
                 ((matches_df['home_team_name'] == home_team) & (matches_df['away_team_name'] == away_team)) |
                 ((matches_df['home_team_name'] == away_team) & (matches_df['away_team_name'] == home_team))
@@ -224,7 +231,7 @@ class FeatureEngineer:
     def build_match_features(self, match: Dict, historical_df: pd.DataFrame) -> pd.Series:
         """
         为单场比赛构建完整特征向量
-        适配API返回的单场比赛数据结构，主管道直接调用
+        字段名和模型预测代码完全匹配，彻底解决KeyError
         """
         try:
             # 适配API数据结构，提取基础信息
@@ -254,7 +261,7 @@ class FeatureEngineer:
             home_injury = self.extract_injury_fatigue_features(home_team_name, home_last_match)
             away_injury = self.extract_injury_fatigue_features(away_team_name, away_last_match)
             
-            # 4. 合并所有特征，构建标准化特征向量
+            # 4. 合并所有特征，字段名和模型预测代码完全匹配
             features = pd.Series({
                 # 基础信息
                 'match_id': match.get('id', 0),
@@ -263,46 +270,48 @@ class FeatureEngineer:
                 'match_date': match_date,
                 'competition_code': match.get('competition', {}).get('code', ''),
                 
-                # 主队核心特征
-                'h_matches_played': home_form.get('matches_played', 0),
-                'h_win_rate': home_form.get('wins', 0) / max(home_form.get('matches_played', 1), 1),
-                'h_draw_rate': home_form.get('draws', 0) / max(home_form.get('matches_played', 1), 1),
-                'h_loss_rate': home_form.get('losses', 0) / max(home_form.get('matches_played', 1), 1),
-                'h_goals_per_match': home_form.get('goals_for', 0) / max(home_form.get('matches_played', 1), 1),
-                'h_goals_against_per_match': home_form.get('goals_against', 0) / max(home_form.get('matches_played', 1), 1),
-                'h_goal_diff_per_match': home_form.get('goal_diff', 0) / max(home_form.get('matches_played', 1), 1),
-                'h_xg_per_match': home_form.get('xg_for', 0) / max(home_form.get('matches_played', 1), 1),
-                'h_xg_against_per_match': home_form.get('xg_against', 0) / max(home_form.get('matches_played', 1), 1),
-                'h_attack_strength': home_form.get('attack_strength', 1.0),
-                'h_defense_strength': home_form.get('defense_strength', 1.0),
-                'h_winning_streak': home_form.get('winning_streak', 0),
-                'h_unbeaten_streak': home_form.get('unbeaten_streak', 0),
-                'h_home_win_rate': home_form.get('home_record', {}).get('wins', 0) / max(len(home_form.get('home_record', {})), 1),
-                'h_injury_severity': home_injury.get('injury_severity', 0),
-                'h_fatigue_level': home_injury.get('fatigue_level', 1.0),
-                'h_midweek_fixture': home_injury.get('midweek_fixture', 0),
+                # 主队核心特征（和模型代码里的字段名完全一致）
+                'home_recent_wins': home_form.get('recent_wins', 0),
+                'home_matches_played': home_form.get('matches_played', 0),
+                'home_win_rate': home_form.get('recent_wins', 0) / max(home_form.get('matches_played', 1), 1),
+                'home_draw_rate': home_form.get('recent_draws', 0) / max(home_form.get('matches_played', 1), 1),
+                'home_loss_rate': home_form.get('recent_losses', 0) / max(home_form.get('matches_played', 1), 1),
+                'home_goals_per_match': home_form.get('goals_for', 0) / max(home_form.get('matches_played', 1), 1),
+                'home_goals_against_per_match': home_form.get('goals_against', 0) / max(home_form.get('matches_played', 1), 1),
+                'home_goal_diff_per_match': home_form.get('goal_diff', 0) / max(home_form.get('matches_played', 1), 1),
+                'home_xg_per_match': home_form.get('xg_for', 0) / max(home_form.get('matches_played', 1), 1),
+                'home_xg_against_per_match': home_form.get('xg_against', 0) / max(home_form.get('matches_played', 1), 1),
+                'home_attack_strength': home_form.get('attack_strength', 1.0),
+                'home_defense_strength': home_form.get('defense_strength', 1.0),
+                'home_winning_streak': home_form.get('winning_streak', 0),
+                'home_unbeaten_streak': home_form.get('unbeaten_streak', 0),
+                'home_home_win_rate': home_form.get('home_record', {}).get('wins', 0) / max(len(home_form.get('home_record', {})), 1),
+                'home_injury_severity': home_injury.get('injury_severity', 0),
+                'home_fatigue_level': home_injury.get('fatigue_level', 1.0),
+                'home_midweek_fixture': home_injury.get('midweek_fixture', 0),
                 
-                # 客队核心特征
-                'a_matches_played': away_form.get('matches_played', 0),
-                'a_win_rate': away_form.get('wins', 0) / max(away_form.get('matches_played', 1), 1),
-                'a_draw_rate': away_form.get('draws', 0) / max(away_form.get('matches_played', 1), 1),
-                'a_loss_rate': away_form.get('losses', 0) / max(away_form.get('matches_played', 1), 1),
-                'a_goals_per_match': away_form.get('goals_for', 0) / max(away_form.get('matches_played', 1), 1),
-                'a_goals_against_per_match': away_form.get('goals_against', 0) / max(away_form.get('matches_played', 1), 1),
-                'a_goal_diff_per_match': away_form.get('goal_diff', 0) / max(away_form.get('matches_played', 1), 1),
-                'a_xg_per_match': away_form.get('xg_for', 0) / max(away_form.get('matches_played', 1), 1),
-                'a_xg_against_per_match': away_form.get('xg_against', 0) / max(away_form.get('matches_played', 1), 1),
-                'a_attack_strength': away_form.get('attack_strength', 1.0),
-                'a_defense_strength': away_form.get('defense_strength', 1.0),
-                'a_winning_streak': away_form.get('winning_streak', 0),
-                'a_unbeaten_streak': away_form.get('unbeaten_streak', 0),
-                'a_away_win_rate': away_form.get('away_record', {}).get('wins', 0) / max(len(away_form.get('away_record', {})), 1),
-                'a_injury_severity': away_injury.get('injury_severity', 0),
-                'a_fatigue_level': away_injury.get('fatigue_level', 1.0),
-                'a_midweek_fixture': away_injury.get('midweek_fixture', 0),
+                # 客队核心特征（和模型代码里的字段名完全一致）
+                'away_recent_wins': away_form.get('recent_wins', 0),
+                'away_matches_played': away_form.get('matches_played', 0),
+                'away_win_rate': away_form.get('recent_wins', 0) / max(away_form.get('matches_played', 1), 1),
+                'away_draw_rate': away_form.get('recent_draws', 0) / max(away_form.get('matches_played', 1), 1),
+                'away_loss_rate': away_form.get('recent_losses', 0) / max(away_form.get('matches_played', 1), 1),
+                'away_goals_per_match': away_form.get('goals_for', 0) / max(away_form.get('matches_played', 1), 1),
+                'away_goals_against_per_match': away_form.get('goals_against', 0) / max(away_form.get('matches_played', 1), 1),
+                'away_goal_diff_per_match': away_form.get('goal_diff', 0) / max(away_form.get('matches_played', 1), 1),
+                'away_xg_per_match': away_form.get('xg_for', 0) / max(away_form.get('matches_played', 1), 1),
+                'away_xg_against_per_match': away_form.get('xg_against', 0) / max(away_form.get('matches_played', 1), 1),
+                'away_attack_strength': away_form.get('attack_strength', 1.0),
+                'away_defense_strength': away_form.get('defense_strength', 1.0),
+                'away_winning_streak': away_form.get('winning_streak', 0),
+                'away_unbeaten_streak': away_form.get('unbeaten_streak', 0),
+                'away_away_win_rate': away_form.get('away_record', {}).get('wins', 0) / max(len(away_form.get('away_record', {})), 1),
+                'away_injury_severity': away_injury.get('injury_severity', 0),
+                'away_fatigue_level': away_injury.get('fatigue_level', 1.0),
+                'away_midweek_fixture': away_injury.get('midweek_fixture', 0),
                 
                 # 两队相对特征（核心预测特征）
-                'rel_win_rate_diff': (home_form.get('wins', 0) / max(home_form.get('matches_played', 1), 1)) - (away_form.get('wins', 0) / max(away_form.get('matches_played', 1), 1)),
+                'rel_win_rate_diff': (home_form.get('recent_wins', 0) / max(home_form.get('matches_played', 1), 1)) - (away_form.get('recent_wins', 0) / max(away_form.get('matches_played', 1), 1)),
                 'rel_goal_diff': home_form.get('goal_diff', 0) - away_form.get('goal_diff', 0),
                 'rel_attack_strength': home_form.get('attack_strength', 1.0) / max(away_form.get('attack_strength', 1.0), 0.1),
                 'rel_defense_strength': home_form.get('defense_strength', 1.0) / max(away_form.get('defense_strength', 1.0), 0.1),
@@ -374,9 +383,9 @@ class FeatureEngineer:
         """默认球队特征，容错兜底"""
         return {
             'matches_played': 0,
-            'wins': 0,
-            'draws': 0,
-            'losses': 0,
+            'recent_wins': 0,
+            'recent_draws': 0,
+            'recent_losses': 0,
             'goals_for': 0,
             'goals_against': 0,
             'goal_diff': 0,
