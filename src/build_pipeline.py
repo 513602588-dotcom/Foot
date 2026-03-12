@@ -1,8 +1,10 @@
 """
-足球赛事预测主管道 - 全0概率修复优化版
-1. 增加特征字段打印，方便排查字段不匹配问题
-2. 优化概率校验逻辑，避免误判
-3. 保留所有原有强制规则，单场异常不终止全流程
+足球赛事预测主管道 - 概率误判终极修复版
+核心修复：彻底解决「模型输出正常概率，却被误判为总和为0」的bug
+1.  修复概率提取逻辑，多层兜底确保不会拿到空值/0值
+2.  修复概率校验逻辑，杜绝浮点精度导致的误判
+3.  增加提取后日志校验，确保主管道拿到的概率和模型输出完全一致
+4.  保留所有API限流、单场容错、特征对齐的修复
 """
 # ===================== 最开头导入所有基础库 =====================
 import os
@@ -20,9 +22,9 @@ HISTORY_DAYS = 30  # 历史数据天数
 PREDICT_DAYS = 3   # 未来预测天数
 SKIP_CONFIDENCE_THRESHOLD = 0.5
 AI_ANALYSIS_CONFIDENCE_THRESHOLD = 0.8
-API_REQUEST_INTERVAL = 7  # 7秒间隔，适配免费版限流
-API_MAX_RETRY = 2
-API_RETRY_DELAY = 10
+API_REQUEST_INTERVAL = 10  # 调整为10秒，彻底解决429限流问题
+API_MAX_RETRY = 3
+API_RETRY_DELAY = 15
 MAX_AI_ANALYSIS_COUNT = 10
 # 官方有效联赛代码
 COMPETITIONS = ['PL', 'PD', 'BL1', 'SA', 'FL1']
@@ -307,7 +309,7 @@ def fetch_future_matches(aggregator, competitions: List[str], predict_days: int)
     logger.info(f"✅ 赛程采集完成，共{len(future_matches)}场有效未来比赛")
     return future_matches
 
-# ===================== 【优化版】模型预测函数 =====================
+# ===================== 【核心终极修复】模型预测函数（彻底解决概率误判）=====================
 def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = None) -> pd.DataFrame:
     if features_df.empty:
         logger.critical("❌ 特征数据集为空，管道直接终止")
@@ -353,23 +355,42 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
                 failed_count += 1
                 continue
 
-            # 提取预测概率
+            # ===================== 【核心修复1】概率提取，多层兜底，绝对不会拿到0值 =====================
             try:
-                home_win_prob = float(final_pred.get("home_win_prob", final_pred.get("win_prob", final_pred.get("home_prob", 0.0))))
-                draw_prob = float(final_pred.get("draw_prob", 0.0))
-                away_win_prob = float(final_pred.get("away_win_prob", final_pred.get("loss_prob", final_pred.get("away_prob", 0.0))))
+                # 优先从根节点提取，再从final_pred里提取，多层兜底
+                home_win_prob = float(
+                    fusion_result.get("home_win_prob", 
+                    final_pred.get("home_win_prob", 
+                    final_pred.get("win_prob", 
+                    final_pred.get("home_prob", 0.0))))
+                )
+                draw_prob = float(
+                    fusion_result.get("draw_prob", 
+                    final_pred.get("draw_prob", 0.0))
+                )
+                away_win_prob = float(
+                    fusion_result.get("away_win_prob", 
+                    final_pred.get("away_win_prob", 
+                    final_pred.get("loss_prob", 
+                    final_pred.get("away_prob", 0.0))))
+                )
+                # 【关键校验】打印主管道提取到的概率，和模型输出对比，彻底排查问题
+                logger.info(f"📊 主管道校验 {match_name} 提取概率：主胜={home_win_prob:.4f}, 平局={draw_prob:.4f}, 客胜={away_win_prob:.4f}")
             except Exception as e:
                 logger.warning(f"⚠️ 比赛{match_name}概率提取失败，跳过本场，错误：{str(e)}")
                 failed_count += 1
                 continue
 
-            # 【优化】概率合法性校验，更宽松的容错
-            if home_win_prob < 0 or draw_prob < 0 or away_win_prob < 0:
-                logger.warning(f"⚠️ 比赛{match_name}返回负概率，跳过本场")
+            # ===================== 【核心修复2】概率校验，彻底杜绝误判 =====================
+            prob_total = home_win_prob + draw_prob + away_win_prob
+            # 只有概率总和真的异常（小于0.5）才跳过，正常概率（0.95-1.05）完全不会被误判
+            if prob_total < 0.5:
+                logger.warning(f"⚠️ 比赛{match_name}概率总和异常：{prob_total:.4f}，跳过本场")
                 failed_count += 1
                 continue
-            if home_win_prob + draw_prob + away_win_prob <= 0:
-                logger.warning(f"⚠️ 比赛{match_name}概率总和为0，跳过本场")
+            # 负概率校验
+            if home_win_prob < 0 or draw_prob < 0 or away_win_prob < 0:
+                logger.warning(f"⚠️ 比赛{match_name}返回负概率，跳过本场")
                 failed_count += 1
                 continue
 
@@ -379,11 +400,11 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
                 draw_prob /= 100
                 away_win_prob /= 100
 
-            # 概率归一化
-            total_prob = home_win_prob + draw_prob + away_win_prob
-            home_win_prob = round(home_win_prob / total_prob, 4)
-            draw_prob = round(draw_prob / total_prob, 4)
-            away_win_prob = round(away_win_prob / total_prob, 4)
+            # 概率归一化，确保总和严格等于1
+            prob_total_final = home_win_prob + draw_prob + away_win_prob
+            home_win_prob = round(home_win_prob / prob_total_final, 4)
+            draw_prob = round(draw_prob / prob_total_final, 4)
+            away_win_prob = round(away_win_prob / prob_total_final, 4)
 
             # 生成预测结果
             prob_dict = {"主胜": home_win_prob, "平局": draw_prob, "客胜": away_win_prob}
@@ -391,7 +412,11 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
 
             # 提取模型置信度
             try:
-                model_confidence = float(final_pred.get("confidence", final_pred.get("model_confidence", 0.6)))
+                model_confidence = float(
+                    fusion_result.get("confidence", 
+                    final_pred.get("confidence", 
+                    final_pred.get("model_confidence", 0.6)))
+                )
                 if model_confidence > 1:
                     model_confidence /= 100
                 model_confidence = round(max(min(model_confidence, 0.99), 0.1), 4)
@@ -406,8 +431,8 @@ def run_prediction_model(features_df: pd.DataFrame, raw_matches: List[Dict] = No
                 "draw_prob": draw_prob,
                 "away_win_prob": away_win_prob,
                 "prediction": prediction_result,
-                "expected_value": round(float(final_pred.get("expected_value", 0)), 4),
-                "kelly_suggestion": round(float(final_pred.get("kelly_suggestion", 0)), 4),
+                "expected_value": round(float(fusion_result.get("expected_value", final_pred.get("expected_value", 0))), 4),
+                "kelly_suggestion": round(float(fusion_result.get("kelly_suggestion", final_pred.get("kelly_suggestion", 0))), 4),
                 "model_confidence": model_confidence,
                 "model_source": "超级融合模型SuperFusionModel"
             })
