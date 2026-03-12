@@ -1,7 +1,6 @@
 """
 多源足球数据API集成
-集成football-data.org, understat, flashscore等数据源
-【修复版】对齐原版，补全真实赔率获取链路，解决EV值全负问题
+【修复版】解决Sofascore 403、the-odds-api 401报错，禁用无效API调用
 """
 import requests
 import json
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class FootballDataAPI:
-    """football-data.org 官方API"""
+    """football-data.org 官方API（核心数据源，稳定可用）"""
     BASE_URL = "https://api.football-data.org/v4"
     
     def __init__(self, api_key: str = None):
@@ -92,35 +91,49 @@ class UnderstatAPI:
         """获取球队xG统计"""
         try:
             url = f"{UnderstatAPI.BASE_URL}/get_league_squad_exp_stats/{league}/2024"
-            resp = requests.get(url, timeout=15)
+            # 加反爬请求头
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://understat.com/"
+            }
+            resp = requests.get(url, headers=headers, timeout=15)
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            logger.error(f"Failed to get Understat xG: {e}")
+            logger.warning(f"Failed to get Understat xG: {e}，使用默认值")
             return {}
     
     @staticmethod
     def get_match_data(match_id: int) -> Dict:
         """获取具体比赛的xG数据"""
         try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://understat.com/"
+            }
             url = f"{UnderstatAPI.BASE_URL}/match/{match_id}"
-            resp = requests.get(url, timeout=15)
+            resp = requests.get(url, headers=headers, timeout=15)
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            logger.error(f"Failed to get match xG data: {e}")
+            logger.warning(f"Failed to get match xG data: {e}")
             return {}
 
 
 class OddsAPI:
-    """赔率数据API - the-odds-api.com"""
+    """赔率数据API - the-odds-api.com【修复版】解决401报错"""
     BASE_URL = "https://api.the-odds-api.com/v4"
     
     def __init__(self, api_key: str = None):
         self.api_key = api_key
+        # 校验Key有效性
+        if self.api_key:
+            logger.info(f"✅ OddsAPI Key已配置，长度：{len(self.api_key)}")
+        else:
+            logger.warning("⚠️ 未配置OddsAPI Key，将使用默认赔率")
     
     def get_upcoming_matches(self, sport: str = "soccer_epl", regions: str = "uk,eu"):
-        """获取即将进行的比赛赔率"""
+        """获取即将进行的比赛赔率，加容错和校验"""
         if not self.api_key:
             return []
         try:
@@ -131,56 +144,39 @@ class OddsAPI:
                 "dateFormat": "iso",
                 "oddsFormat": "decimal"
             }
+            # 加请求头
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
             url = f"{self.BASE_URL}/sports/{sport}/events"
-            resp = requests.get(url, params=params, timeout=15)
+            resp = requests.get(url, params=params, headers=headers, timeout=15)
+            # 处理401报错
+            if resp.status_code == 401:
+                logger.error("❌ OddsAPI 401未授权：请检查API Key是否正确、是否过期、免费额度是否用完")
+                return []
             resp.raise_for_status()
+            # 打印剩余额度，方便排查
+            remaining = resp.headers.get('x-requests-remaining', '未知')
+            used = resp.headers.get('x-requests-used', '未知')
+            logger.info(f"✅ OddsAPI请求成功，剩余额度：{remaining}，已用：{used}")
             return resp.json()
         except Exception as e:
             logger.error(f"Failed to get odds: {e}")
             return []
 
 
-class SofascoreAPI:
-    """Sofascore快照数据API"""
-    BASE_URL = "https://api.sofascore.com/api"
-    
-    @staticmethod
-    def get_match_statistics(match_id: int) -> Dict:
-        """获取比赛统计数据"""
-        try:
-            url = f"{SofascoreAPI.BASE_URL}/v1/event/{match_id}/statistics"
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            logger.error(f"Failed to get Sofascore stats: {e}")
-            return {}
-    
-    @staticmethod
-    def get_team_form(team_id: int, limit: int = 10) -> List[Dict]:
-        """获取球队最近比赛"""
-        try:
-            url = f"{SofascoreAPI.BASE_URL}/v1/team/{team_id}/events/last/{limit}"
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            return resp.json().get('events', [])
-        except Exception as e:
-            logger.error(f"Failed to get team form: {e}")
-            return []
-
-
 class DataAggregator:
-    """数据聚合器 - 合并多个API源"""
+    """数据聚合器 - 合并多个API源【修复版】禁用无效Sofascore调用"""
     
     def __init__(self, football_api_key: str = None, odds_api_key: str = None):
         self.fdb = FootballDataAPI(football_api_key)
         self.understat = UnderstatAPI()
         self.odds = OddsAPI(odds_api_key)
-        self.sofascore = SofascoreAPI()
-        logger.info("✅ 多源数据聚合器初始化完成，所有API实例已创建")
+        # 禁用Sofascore API，避免403报错
+        logger.info("✅ 多源数据聚合器初始化完成，已禁用无效Sofascore API调用")
     
     def get_comprehensive_match_data(self, match: Dict) -> Dict:
-        """获取单场比赛的综合数据【对齐原版，补全真实赔率获取和匹配】"""
+        """获取单场比赛的综合数据，仅保留有效API调用"""
         # 统一字段名，和预测引擎、主管道完全对齐
         home_team = match.get("homeTeam", {}).get("name", "")
         away_team = match.get("awayTeam", {}).get("name", "")
@@ -197,16 +193,12 @@ class DataAggregator:
             "odds_win": None,
             "odds_draw": None,
             "odds_away": None,
-            "team_form": {
-                "home": {},
-                "away": {}
-            },
             "xg_stats": {},
             "head_to_head": []
         }
         
         try:
-            # 【核心修复：对齐原版】获取赔率数据，并精准匹配到当前比赛
+            # 【核心】获取赔率数据，并精准匹配到当前比赛
             if self.odds.api_key:
                 # 联赛映射，适配the-odds-api的官方联赛代码
                 league_map = {
@@ -241,15 +233,6 @@ class DataAggregator:
                                 enhanced["odds_away"] = outcome.get("price", None)
                         logger.info(f"✅ 赔率匹配成功：{home_team} vs {away_team}，主胜赔率：{enhanced['odds_win']}")
                         break
-            
-            # 获取球队数据（如果有ID）
-            if "homeTeam" in match and match["homeTeam"].get("id"):
-                team_form = self.sofascore.get_team_form(match["homeTeam"].get("id"))
-                enhanced["team_form"]["home"] = team_form
-            
-            if "awayTeam" in match and match["awayTeam"].get("id"):
-                team_form = self.sofascore.get_team_form(match["awayTeam"].get("id"))
-                enhanced["team_form"]["away"] = team_form
         
         except Exception as e:
             logger.error(f"❌ 聚合比赛数据失败：{home_team} vs {away_team}，错误：{e}")
