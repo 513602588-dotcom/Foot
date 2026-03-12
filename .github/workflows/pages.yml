@@ -1,89 +1,73 @@
 name: Daily JCZQ Build & Deploy
-
 on:
-  push:
-    branches: ["main"]
-  workflow_dispatch:
   schedule:
-    # Beijing 09:30 and 21:30 => UTC 01:30 and 13:30
-    - cron: "30 1,13 * * *"
+    - cron: '30 1 * * *'  # 北京时间 09:30 每日自动运行
+    - cron: '30 13 * * *' # 北京时间 21:30 每日自动运行
+  workflow_dispatch: # 保留手动触发按钮
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+# 修复Node.js版本警告，适配GitHub最新规则
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    env:
-      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
-      FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
-      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-      GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL }}
-      OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
-      GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
-      ALLOW_GLOBAL_FIXTURE_FALLBACK: "true"
     steps:
-      - uses: actions/checkout@v4
+      - name: 拉取项目代码
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: 设置Python环境
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
+          cache: 'pip'
 
-      - name: Install deps
+      - name: 安装系统依赖
         run: |
-          python -m pip install --upgrade pip
-          pip install pandas numpy scipy scikit-learn requests beautifulsoup4 lxml python-dotenv
+          sudo apt-get update
+          sudo apt-get install -y libgbm-dev libasound2-dev
 
-      - name: Validate Required Secrets
+      - name: 安装项目依赖
         run: |
-          set -e
-          required_vars=(API_FOOTBALL_KEY FOOTBALL_DATA_KEY ODDS_API_KEY OPENAI_API_KEY GEMINI_API_KEY)
-          for v in "${required_vars[@]}"; do
-            val="${!v}"
-            if [[ -z "$val" ]]; then
-              echo "ERROR: missing required secret $v"
-              exit 1
-            fi
-            if [[ "$val" =~ your_|_here|placeholder|changeme ]]; then
-              echo "ERROR: secret $v looks like a placeholder"
-              exit 1
-            fi
-          done
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          playwright install --with-deps
 
-          if [[ -z "$OPENAI_BASE_URL" ]]; then
-            echo "OPENAI_BASE_URL not set, using default relay"
-            echo "OPENAI_BASE_URL=https://nan.meta-api.vip/v1" >> "$GITHUB_ENV"
-          fi
-          if [[ -z "$GEMINI_BASE_URL" ]]; then
-            echo "GEMINI_BASE_URL not set, using default relay"
-            echo "GEMINI_BASE_URL=https://once.novai.su/v1" >> "$GITHUB_ENV"
-          fi
-          if [[ -z "$OPENAI_MODEL" ]]; then
-            echo "OPENAI_MODEL=gpt-5.4,gpt-5.3" >> "$GITHUB_ENV"
-          fi
-          if [[ -z "$GEMINI_MODEL" ]]; then
-            echo "GEMINI_MODEL=gemini-3.1-pro,gemini-3.0-pro" >> "$GITHUB_ENV"
-          fi
-
-      - name: Run Daily JCZQ Pipeline
+      - name: 校验必填赛事API密钥（仅校验核心必须项，大模型不强制）
         run: |
-          python -m src.daily_jczq_pipeline
+          if [ -z "${{ secrets.API_FOOTBALL_KEY }}" ]; then
+            echo "错误：缺少必填的API_FOOTBALL_KEY"
+            exit 1
+          fi
+          if [ -z "${{ secrets.FOOTBALL_DATA_KEY }}" ]; then
+            echo "错误：缺少必填的FOOTBALL_DATA_KEY"
+            exit 1
+          fi
+          if [ -z "${{ secrets.ODDS_API_KEY }}" ]; then
+            echo "错误：缺少必填的ODDS_API_KEY"
+            exit 1
+          fi
+        shell: bash
 
-      - uses: actions/upload-pages-artifact@v4
+      - name: 运行完整预测管道（适配DeepSeek大模型）
+        run: |
+          python -m src.build_pipeline
+        env:
+          # 核心赛事数据API（必填）
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          # DeepSeek大模型配置（可选，填了就自动启用）
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          # 运行日志级别
+          LOG_LEVEL: INFO
+
+      - name: 部署预测页面到GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: site
-
-  deploy:
-    needs: build-and-deploy
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          force_orphan: true
